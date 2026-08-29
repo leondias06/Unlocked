@@ -37,10 +37,34 @@ _OWN_PID = os.getpid()
 UIA_EDIT_CONTROL_TYPE_ID = 50004
 UIA_COMBO_BOX_CONTROL_TYPE_ID = 50003
 UIA_DOCUMENT_CONTROL_TYPE_ID = 50030
-TYPEABLE_CONTROL_TYPES = {
+UIA_GROUP_CONTROL_TYPE_ID = 50026
+UIA_PANE_CONTROL_TYPE_ID = 50033
+UIA_CUSTOM_CONTROL_TYPE_ID = 50025
+
+# Edit and ComboBox mean "typeable" unconditionally - every native and
+# browser text input reports one of these, no further check needed.
+ALWAYS_TYPEABLE_CONTROL_TYPES = {
     UIA_EDIT_CONTROL_TYPE_ID,
     UIA_COMBO_BOX_CONTROL_TYPE_ID,
-    UIA_DOCUMENT_CONTROL_TYPE_ID,
+}
+
+# Document, on the other hand, is genuinely ambiguous: a native app's
+# editable body (Word) *and* a browser's read-only page content both
+# report as Document - confirmed live that Chrome moves focus to the
+# page's root "Document" element on every full navigation (a known
+# behavior for screen-reader compatibility), which is exactly what was
+# popping the keyboard up on every link click/new page with nothing
+# typeable on it. Group/Pane/Custom are the reverse case: confirmed live
+# that a real contenteditable region (the kind of hidden capture surface
+# rich editors like Google Docs use) reports as Group, not Document, so
+# it was never being detected as typeable at all. Both directions are
+# resolved by the same check - see _is_readonly_text() below - rather
+# than trusting or excluding control type alone.
+DOCUMENT_LIKE_CONTROL_TYPES = {UIA_DOCUMENT_CONTROL_TYPE_ID}
+CONTAINER_CONTROL_TYPES_NEEDING_PROOF = {
+    UIA_GROUP_CONTROL_TYPE_ID,
+    UIA_PANE_CONTROL_TYPE_ID,
+    UIA_CUSTOM_CONTROL_TYPE_ID,
 }
 
 FOCUS_POLL_INTERVAL_S = 0.3
@@ -105,7 +129,7 @@ class FocusWatcher:
 
         while not self._stop.is_set():
             try:
-                is_typeable, element_id = self._inspect_focused_element(uia)
+                is_typeable, element_id = self._inspect_focused_element(uia, uia_module)
             except Exception:
                 is_typeable, element_id = False, None
 
@@ -125,7 +149,38 @@ class FocusWatcher:
             time.sleep(FOCUS_POLL_INTERVAL_S)
 
     @staticmethod
-    def _inspect_focused_element(uia) -> tuple[bool, tuple | None]:
+    def _is_readonly_text(element, uia_module) -> bool | None:
+        """True/False if the element's text content is provably
+        read-only/editable, None if that can't be determined (no Text
+        pattern, or the IsReadOnly text attribute isn't implemented for
+        this element) - callers fall back to their own default rather
+        than trusting an inconclusive result.
+
+        Verified live against three real cases before relying on this:
+        Word's document body -> False (editable), a plain Wikipedia
+        article's root web area -> True (read-only), a real
+        contenteditable region -> False (editable). Value/TextEdit
+        pattern *availability* looked like promising signals at first but
+        turned out to just reflect the framework (Chrome reports both as
+        available on everything, Word on neither) rather than actual
+        editability - this text attribute was the one property that came
+        back correct in all three cases.
+        """
+        try:
+            has_text_pattern = bool(
+                element.GetCurrentPropertyValue(uia_module.UIA_IsTextPatternAvailablePropertyId)
+            )
+            if not has_text_pattern:
+                return None
+            text_pattern = element.GetCurrentPattern(uia_module.UIA_TextPatternId)
+            text_pattern = text_pattern.QueryInterface(uia_module.IUIAutomationTextPattern)
+            value = text_pattern.DocumentRange.GetAttributeValue(uia_module.UIA_IsReadOnlyAttributeId)
+        except Exception:
+            return None
+        return value if isinstance(value, bool) else None
+
+    @classmethod
+    def _inspect_focused_element(cls, uia, uia_module) -> tuple[bool, tuple | None]:
         element = uia.GetFocusedElement()
         if element is None:
             return False, None
@@ -140,7 +195,24 @@ class FocusWatcher:
             # typeable" - that would be reacting to our own UI, not
             # anything the user actually did.
             return False, None
-        if element.CurrentControlType not in TYPEABLE_CONTROL_TYPES:
+
+        control_type = element.CurrentControlType
+        if control_type in ALWAYS_TYPEABLE_CONTROL_TYPES:
+            is_typeable = True
+        elif control_type in DOCUMENT_LIKE_CONTROL_TYPES:
+            # Trusted by default (this is what made Word/native document
+            # editors work in the first place) - only overridden when we
+            # can *prove* the content is read-only.
+            is_typeable = cls._is_readonly_text(element, uia_module) is not True
+        elif control_type in CONTAINER_CONTROL_TYPES_NEEDING_PROOF:
+            # Excluded by default (these are common, generic container
+            # types used all over every UI) - only trusted when we can
+            # *prove* the content is genuinely editable.
+            is_typeable = cls._is_readonly_text(element, uia_module) is False
+        else:
+            is_typeable = False
+
+        if not is_typeable:
             return False, None
         try:
             element_id = element.GetRuntimeId()

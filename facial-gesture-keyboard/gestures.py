@@ -28,7 +28,7 @@ KEYBOARD_MODE_GESTURES = ["up", "down", "left", "right", "confirm", "backspace"]
 # switch_to_keyboard used to live here as a calibrated gesture, but
 # bringing up the keyboard is now automatic - see focus_watcher.py - so
 # there's nothing left to gesture for on this side of the mode switch.
-EYE_MODE_GESTURES = ["left_click", "right_click"]
+EYE_MODE_GESTURES = ["left_click", "right_click", "scroll_up", "scroll_down"]
 
 # Keyboard-mode and eye-mode gestures are mutually exclusive by design
 # (only one mode's gestures are ever listened to at a time - see
@@ -61,12 +61,24 @@ NEUTRAL_FRAMES_TO_REARM = 3  # consecutive neutral frames needed before the next
 # Gestures that auto-repeat while held, instead of requiring a return to
 # neutral between each fire - navigation and backspace behave like a
 # held arrow/delete key on a physical keyboard, which matters a lot for
-# scanning speed across an 11x7 grid. confirm/click/mode-switch
-# deliberately stay one-shot-per-hold: repeating those while held would
-# mean an accidental extra keystroke, extra click, or a mode flicker.
-REPEATABLE_LABELS = {"up", "down", "left", "right", "backspace"}
+# scanning speed across an 11x7 grid. scroll_up/scroll_down repeat for a
+# different reason: they're meant to feel like continuous scrolling for
+# as long as the gesture is held, stopping the moment the face returns
+# to neutral. confirm/click/mode-switch deliberately stay one-shot-per-
+# hold: repeating those while held would mean an accidental extra
+# keystroke, extra click, or a mode flicker.
+REPEATABLE_LABELS = {"up", "down", "left", "right", "backspace", "scroll_up", "scroll_down"}
 REPEAT_INITIAL_DELAY_S = 0.45  # time held before auto-repeat kicks in, like OS key-repeat
 REPEAT_INTERVAL_S = 0.15       # time between repeats once it's kicked in
+
+# Scrolling reads more like a continuous, ongoing action than a discrete
+# navigation step - and unlike moving between keyboard cells, there's no
+# way to see it coming and let up early, so it needs to stay
+# comfortably slow rather than racing past content. Keyboard
+# navigation's repeat interval is deliberately left alone (see
+# REPEAT_INTERVAL_S above); this only slows down scroll_up/scroll_down.
+SCROLL_REPEAT_INTERVAL_S = 0.35
+REPEAT_INTERVAL_OVERRIDES = {"scroll_up": SCROLL_REPEAT_INTERVAL_S, "scroll_down": SCROLL_REPEAT_INTERVAL_S}
 
 # ---------------------------------------------------------------- landmark indices
 #
@@ -321,8 +333,28 @@ class CalibrationStore:
         allowed_mask = np.array([c in allowed_labels for c in classes])
         if not allowed_mask.any():
             return None, 0.0
-        idx = int(np.argmax(np.where(allowed_mask, proba, -1.0)))
-        return classes[idx], float(proba[idx])
+        # Renormalized across just the allowed classes, not read off the
+        # raw (all-9-class) probabilities directly - otherwise the
+        # returned confidence is biased by how many *disallowed* classes
+        # happen to be soaking up neighbor votes, which has nothing to do
+        # with how well the frame matches what's actually reachable right
+        # now (see the docstring above). This bites eye mode hardest:
+        # with only left_click/right_click/neutral allowed vs. 6
+        # disallowed keyboard-mode gestures, a real left_click could
+        # easily have several of its k nearest neighbors fall on a
+        # disallowed class (e.g. "left", historically near-identical to
+        # "left_click"), leaving left_click's raw, un-renormalized
+        # probability near zero even when it's clearly the best of the
+        # 3 allowed candidates - confirmed as the cause of "seeing:
+        # left_click" pinned at 0% confidence, never clearing
+        # CONFIDENCE_THRESHOLD no matter how long the gesture is held.
+        masked_proba = np.where(allowed_mask, proba, 0.0)
+        total = masked_proba.sum()
+        if total <= 0.0:
+            return None, 0.0
+        renormalized = masked_proba / total
+        idx = int(np.argmax(renormalized))
+        return classes[idx], float(renormalized[idx])
 
 
 # ---------------------------------------------------------------- debouncing
@@ -382,9 +414,10 @@ class GestureDebouncer:
             and self.last_repeat_at is not None
         ):
             now = time.monotonic()
+            repeat_interval = REPEAT_INTERVAL_OVERRIDES.get(pred, REPEAT_INTERVAL_S)
             if (
                 now - self.fired_at >= REPEAT_INITIAL_DELAY_S
-                and now - self.last_repeat_at >= REPEAT_INTERVAL_S
+                and now - self.last_repeat_at >= repeat_interval
             ):
                 self.last_repeat_at = now
                 return pred

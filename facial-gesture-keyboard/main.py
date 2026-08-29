@@ -177,13 +177,25 @@ CURSOR_MAX_SPEED = 900.0     # px/sec cap, so a big head snap can't fling the cu
 # moving" from that check's point of view, so it would never be
 # recognized as something to correct - the exact stuck-forever failure
 # mode this exists to fix. Using two rates instead: fast while at rest
-# (no risk of interfering with anything), much slower while deflected
-# (~10x, so a brief deliberate flick to move the cursor barely decays,
-# but a pose held for many seconds - which is either sustained drift or
-# a long intentional move either way ends up wanting the same
-# treatment - eventually gets absorbed as the new center).
+# (no risk of interfering with anything). While deflected, recentering
+# only applies at all to *small* deflections - just past the dead zone,
+# up to CURSOR_RECENTER_NEAR_ZONE - on the theory that a small, barely-
+# outside-the-dead-zone reading is more likely an imperfect baseline
+# than something you're deliberately holding. Anything further out is
+# trusted as real, deliberate navigation and gets zero recentering,
+# however long it's held. This used to recenter at a slow-but-nonzero
+# rate regardless of how far outside the dead zone the deflection was
+# ("a pose held for many seconds eventually gets absorbed as the new
+# center") - which sounds harmless but isn't: a multi-second hold to
+# aim the cursor at something (completely normal, not a sign of drift)
+# would drag the baseline toward wherever you were aiming for the whole
+# time you held it, so releasing back to your actual neutral position
+# would then read as deflected *the other way* and the cursor would
+# immediately drift off in the opposite direction - reported as "moving
+# down then back to center registers as wanting to move up".
 CURSOR_RECENTER_ALPHA_AT_REST = 0.02
 CURSOR_RECENTER_ALPHA_WHILE_MOVING = 0.003
+CURSOR_RECENTER_NEAR_ZONE = 0.07
 
 # Live deflection-from-baseline, refreshed every frame in eye mode -
 # purely for the debug overlay (see windows.update_cursor_debug), so
@@ -241,10 +253,22 @@ def update_cursor_from_head_pose(landmarks: list[dict], dt: float) -> None:
     cursor_is_moving = yaw_speed != 0.0 or pitch_speed != 0.0
     cursor_debug["moving"] = cursor_is_moving
 
-    alpha = CURSOR_RECENTER_ALPHA_WHILE_MOVING if cursor_is_moving else CURSOR_RECENTER_ALPHA_AT_REST
+    def recenter_alpha(delta: float, moving_axis: bool) -> float:
+        if not moving_axis:
+            return CURSOR_RECENTER_ALPHA_AT_REST
+        if abs(delta) < CURSOR_RECENTER_NEAR_ZONE:
+            return CURSOR_RECENTER_ALPHA_WHILE_MOVING
+        return 0.0
+
+    # Per-axis, deliberately - a sideways tilt used to be enough to also
+    # slow-recenter the *pitch* baseline (and vice versa) even though
+    # that axis was sitting still the whole time, since both axes shared
+    # one alpha picked from whether *either* was moving.
+    yaw_alpha = recenter_alpha(yaw_delta, yaw_speed != 0.0)
+    pitch_alpha = recenter_alpha(pitch_delta, pitch_speed != 0.0)
     cursor_baseline = (
-        cursor_baseline[0] + (yaw - cursor_baseline[0]) * alpha,
-        cursor_baseline[1] + (pitch - cursor_baseline[1]) * alpha,
+        cursor_baseline[0] + (yaw - cursor_baseline[0]) * yaw_alpha,
+        cursor_baseline[1] + (pitch - cursor_baseline[1]) * pitch_alpha,
     )
 
     dx_speed = max(-CURSOR_MAX_SPEED, min(CURSOR_MAX_SPEED, yaw_speed * CURSOR_SENSITIVITY))
@@ -481,24 +505,37 @@ async def ws_endpoint(websocket: WebSocket):
                     # mode's labels, if any), then debounce into a
                     # discrete event.
                     if active_mode == "eye" and cursor_is_moving:
-                        # The same head tilt that's steering the cursor
-                        # can otherwise get misread as left_click/
-                        # right_click mid-movement - only neutral is a
-                        # candidate while the cursor is actually moving,
-                        # so a click can only ever fire once you've
-                        # settled back to center.
-                        allowed = {gestures.NEUTRAL_LABEL}
+                        # The same head tilt that's steering the cursor can
+                        # otherwise get misread as left_click/right_click
+                        # mid-movement, so we don't want a click to fire
+                        # while the cursor is actively moving. But the
+                        # dead-zone boundary is inherently noisy for a real
+                        # human (micro-tremor, breathing) - cursor_is_moving
+                        # can flicker True for a single stray frame even
+                        # while someone is genuinely trying to hold a click
+                        # gesture still. Feeding "neutral" into the
+                        # debouncer on those frames (the previous approach)
+                        # actively resets its hold_count to 0 every time
+                        # (see is_neutral_ish in GestureDebouncer.update),
+                        # which meant a five-consecutive-frame hold could
+                        # almost never complete - clicks were suppressed
+                        # almost all the time, not just while moving.
+                        # Simply skipping classification this frame instead
+                        # pauses the hold-count clock rather than resetting
+                        # it, so a brief flicker mid-hold no longer throws
+                        # away progress already made.
+                        pass
                     else:
                         allowed = MODE_ALLOWED_LABELS.get(active_mode)
-                    pred, confidence = calibration_store.predict(features, allowed_labels=allowed)
-                    response["prediction"] = pred
-                    response["confidence"] = round(confidence, 2)
+                        pred, confidence = calibration_store.predict(features, allowed_labels=allowed)
+                        response["prediction"] = pred
+                        response["confidence"] = round(confidence, 2)
 
-                    fired = debouncer.update(pred, confidence)
-                    if fired:
-                        await websocket.send_text(json.dumps({
-                            "type": "gesture", "label": fired, "confidence": round(confidence, 2),
-                        }))
+                        fired = debouncer.update(pred, confidence)
+                        if fired:
+                            await websocket.send_text(json.dumps({
+                                "type": "gesture", "label": fired, "confidence": round(confidence, 2),
+                            }))
 
                 await websocket.send_text(json.dumps(response))
                 continue

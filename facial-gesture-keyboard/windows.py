@@ -126,6 +126,12 @@ def show_without_stealing_focus(window: webview.Window) -> None:
 
 KEYBOARD_MODE_GESTURES = {"up", "down", "left", "right", "confirm", "backspace"}
 
+# One wheel "click" per fire (~3 lines in most apps) - deliberately the
+# smallest unit pynput's scroll() offers, rather than a larger jump, so
+# repeated fires (see gestures.SCROLL_REPEAT_INTERVAL_S) read as a slow,
+# steady trickle instead of jumpy page-sized leaps.
+SCROLL_CLICKS_PER_FIRE = 1
+
 
 class DesktopWindows:
     """Owns the three windows, the current mode, and the transitions
@@ -238,6 +244,10 @@ class DesktopWindows:
                 self.mouse.click(Button.left)
             elif label == "right_click":
                 self.mouse.click(Button.right)
+            elif label == "scroll_up":
+                self.mouse.scroll(0, SCROLL_CLICKS_PER_FIRE)
+            elif label == "scroll_down":
+                self.mouse.scroll(0, -SCROLL_CLICKS_PER_FIRE)
         # mode == "setup": gestures don't drive anything here - the
         # calibration UI itself is button-driven, not gesture-driven.
 

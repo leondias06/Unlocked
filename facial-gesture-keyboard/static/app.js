@@ -68,6 +68,9 @@ let msgCount = 0;
 let fpsWindowStart = performance.now();
 let scanPhase = 0;
 
+let lastDebugPushAt = 0;
+const DEBUG_PUSH_INTERVAL_MS = 150; // throttles the debug-overlay bridge calls - see handleTracking
+
 // calibration/gesture state
 let allLabels = [];          // e.g. ["neutral","up","down","left","right","confirm","backspace"]
 let neutralLabel = "neutral";
@@ -110,6 +113,13 @@ function connectWS() {
   ws.onopen = () => setConnected(true);
   ws.onclose = () => {
     setConnected(false);
+    // Any timestamps still queued belonged to frames sent on the
+    // connection that just died - their "tracking" replies are never
+    // coming, so without this they'd sit here forever, shifted off one
+    // at a time against unrelated *future* frames (permanently wrong
+    // latency readings) or, worse, simply piling up higher with every
+    // reconnect for the rest of the session.
+    sendTimestamps = [];
     setTimeout(connectWS, 1500);
   };
   ws.onerror = () => ws.close();
@@ -186,10 +196,27 @@ function handleTracking(msg) {
     mFace.classList.remove("is-idle", "is-alert");
     mPoints.textContent = msg.landmark_count;
 
-    if (msg.cursor_debug && window.pywebview?.api?.update_cursor_debug) {
-      window.pywebview.api.update_cursor_debug(
-        msg.cursor_debug.ready, msg.cursor_debug.yaw_delta, msg.cursor_debug.pitch_delta, msg.cursor_debug.moving
-      );
+    // Throttled deliberately: these two calls cross into the debug
+    // window's own JS engine over the *same* single-threaded pywebview
+    // bridge that also carries gesture dispatch (on_gesture) and mode
+    // transitions. At full frame rate (~20/s) that's 40+ extra
+    // cross-window calls a second competing with the calls that
+    // actually matter, and if the bridge ever falls even slightly
+    // behind, the backlog has no way to recover - the client keeps
+    // sending on a fixed timer regardless, so it only ever gets worse
+    // the longer a session runs. The debug overlay is "just for
+    // testing" and doesn't need full frame rate to be useful.
+    const nowMs = performance.now();
+    if (nowMs - lastDebugPushAt >= DEBUG_PUSH_INTERVAL_MS) {
+      lastDebugPushAt = nowMs;
+      if (msg.cursor_debug && window.pywebview?.api?.update_cursor_debug) {
+        window.pywebview.api.update_cursor_debug(
+          msg.cursor_debug.ready, msg.cursor_debug.yaw_delta, msg.cursor_debug.pitch_delta, msg.cursor_debug.moving
+        );
+      }
+      if (msg.prediction !== undefined && window.pywebview?.api?.update_live_gesture) {
+        window.pywebview.api.update_live_gesture(msg.prediction || null, msg.confidence || 0);
+      }
     }
 
     if (msg.capture_label) {
@@ -199,11 +226,6 @@ function handleTracking(msg) {
       // live classification readout
       const conf = msg.confidence !== undefined ? ` (${Math.round(msg.confidence * 100)}%)` : "";
       mPrediction.textContent = (msg.prediction || "—") + conf;
-      // Also drives the small always-on-top debug overlay (windows.py),
-      // since that window has no camera/websocket of its own.
-      if (window.pywebview?.api?.update_live_gesture) {
-        window.pywebview.api.update_live_gesture(msg.prediction || null, msg.confidence || 0);
-      }
     } else {
       mPrediction.textContent = "not calibrated";
     }

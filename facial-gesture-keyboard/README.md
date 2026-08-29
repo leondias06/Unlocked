@@ -6,12 +6,12 @@ This covers the first two working pieces of the hackathon project:
    server, which runs face landmark detection (MediaPipe) and draws the
    landmarks live on screen.
 2. **Calibration + gesture classification** — record a few seconds of
-   each of the 8 target gestures plus a neutral face, train a
+   each of the 10 target gestures plus a neutral face, train a
    lightweight classifier on the spot, and see discrete gesture events
    fire live as you repeat them. Six are for **keyboard mode**
-   (up/down/left/right/confirm/backspace); two are for **eye/mouse
-   mode** (left_click/right_click). Only one mode's gestures are ever
-   listened to at a time - see "Modes" below.
+   (up/down/left/right/confirm/backspace); four are for **eye/mouse
+   mode** (left_click/right_click/scroll_up/scroll_down). Only one
+   mode's gestures are ever listened to at a time - see "Modes" below.
 3. **On-screen keyboard** — matches the reference layout (11x7 grid,
    esc/tab/caps/enter/backspace, a numbers/symbols column, function
    row). It types **real OS-level keystrokes** (via `pynput`), so it
@@ -96,10 +96,11 @@ such issue.)
 
 ## 3. Calibrate
 
-From the dashboard, click **Calibrate**. For each of the 9 rows -
+From the dashboard, click **Calibrate**. For each of the 11 rows -
 `neutral`, then the 6 **keyboard-mode** gestures
-(`up`, `down`, `left`, `right`, `confirm`, `backspace`), then the 2
-**eye-mode** gestures (`left_click`, `right_click`):
+(`up`, `down`, `left`, `right`, `confirm`, `backspace`), then the 4
+**eye-mode** gestures (`left_click`, `right_click`, `scroll_up`,
+`scroll_down`):
 
 1. Decide what facial movement you'll use for that action.
 2. Click **Record**, hold/repeat that movement for a few seconds
@@ -148,7 +149,11 @@ likely to be misread, so it's worth being precise about it:
   to move a cursor isn't realistic. Moves the real OS cursor
   continuously via **head-pose steering** (see below), and separately
   receives the discrete `left_click`/`right_click` gestures (real OS
-  mouse clicks).
+  mouse clicks) and `scroll_up`/`scroll_down` (real OS mouse-wheel
+  scroll, one small step per fire - see **Held-gesture auto-repeat**
+  below for why scrolling repeats slower than keyboard navigation
+  does). Works on any window that responds to scrolling - a Word
+  document, a web page, search results, and so on.
 - **keyboard** - the on-screen keyboard overlay is visible and
   receives the 6 keyboard-mode gestures. Entered from **eye**
   *automatically* - see **Automatic keyboard pop-up** below - not via a
@@ -217,21 +222,34 @@ that by only recentering while at-rest turned out not to work at all:
 drift large enough to sit outside the dead zone is, by definition,
 indistinguishable from "actively moving" to that check, so it would
 never be recognized as something to correct - the exact "cursor won't
-stop drifting" failure mode this exists to fix. Using two rates instead
-means a brief deliberate flick barely decays, but a pose held for many
-seconds - sustained drift or a long intentional move, either way ends
-up wanting the same treatment - eventually gets absorbed as the new
-center. While the cursor reads as moving, `left_click`/`right_click`
-are also suppressed (forced to `neutral`) - the same head tilt that
-steers the cursor can otherwise get misread as a click mid-movement, so
-a click can only fire once you've actually settled back to center.
+stop drifting" failure mode this exists to fix. A *second* attempt -
+recentering at a slower rate for as long as the cursor reads as moving,
+however far outside the dead zone - also turned out wrong in practice:
+a multi-second deliberate hold (completely normal - aiming the cursor
+at something) would drag the baseline toward wherever you were looking
+for the whole time you held it, so releasing back to true center would
+then read as deflected the *other* way and the cursor would drift off
+in the opposite direction. The slow rate now only applies to small
+deflections just past the dead zone (`CURSOR_RECENTER_NEAR_ZONE`,
+likely an imperfect baseline) - anything further out is trusted as
+real, deliberate navigation and gets zero recentering, however long
+it's held. While the cursor reads as moving, `left_click`/`right_click`/
+`scroll_up`/`scroll_down` are also suppressed (classification is
+skipped that frame entirely, not forced to `neutral` - forcing
+`neutral` would reset the debouncer's hold-count on every stray
+"moving" blip, which made a held click/scroll gesture almost
+impossible to ever complete) - the same head tilt that steers the
+cursor can otherwise get misread as one of these mid-movement, so they
+can only fire once you've actually settled back to center.
 
 Tunable in `main.py`: `CURSOR_BASELINE_SAMPLES` (frames averaged into
 the initial "center"), `CURSOR_DEAD_ZONE` (how much tilt is treated as
 at-rest jitter rather than a deliberate move), `CURSOR_SENSITIVITY`
 (px/sec per unit of tilt), `CURSOR_MAX_SPEED` (hard cap so a big head
-snap can't fling the cursor off-screen), and the two recenter alphas
-above. These are reasonable starting values, not exhaustively tuned
+snap can't fling the cursor off-screen), the two recenter alphas above,
+and `CURSOR_RECENTER_NEAR_ZONE` (how far past the dead zone still
+counts as "probably just a stale baseline" rather than deliberate
+movement). These are reasonable starting values, not exhaustively tuned
 against a real face - the debug overlay's `cursor` line shows the live
 yaw/pitch deflection from center and whether it currently reads as
 moving, which is the first thing to check if something feels off.
@@ -258,9 +276,18 @@ until you release, instead of requiring a full return-to-neutral
 between every single step. This is what actually makes scanning across
 an 11x7 grid fast enough to use; without it, moving from one corner to
 the other means holding-and-releasing the same gesture a dozen times.
-confirm and the eye-mode gestures (left/right click) deliberately stay
+`scroll_up`/`scroll_down` (eye mode) also auto-repeat while held - real
+mouse-wheel scrolling, one small step per fire, stopping the instant
+your face returns to neutral - but at a deliberately slower ~350ms
+interval than keyboard navigation's: scrolling reads more like a
+continuous, ongoing action than a discrete step between grid cells, and
+there's no way to see it coming and let up early the way you can with
+navigation, so it stays slow and steady rather than racing past
+content. confirm and left_click/right_click deliberately stay
 one-shot-per-hold - repeating those while held would mean an accidental
-extra keystroke or click. See `GestureDebouncer` in `gestures.py`.
+extra keystroke or click. See `GestureDebouncer`,
+`SCROLL_REPEAT_INTERVAL_S`, and `REPEAT_INTERVAL_OVERRIDES` in
+`gestures.py`.
 
 The layout is an 11x7 grid matching the reference design: plain A-Z
 reading order (not QWERTY) with a numbers/symbols column, `caps` and
@@ -398,7 +425,7 @@ tracebacks that a windowed app otherwise swallows.
 
 - **Detection reliability:** does tracking stay stable as you move,
   turn your head, or change lighting?
-- **Gesture separability:** are the 8 gestures + neutral easy to tell
+- **Gesture separability:** are the 10 gestures + neutral easy to tell
   apart in practice, or do some get confused with each other? If two
   gestures keep firing as each other, they're probably too similar in
   landmark-feature space — pick more distinct movements for them.
