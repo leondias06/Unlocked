@@ -1,17 +1,28 @@
 :root {
-  --ink: #0D1117;
-  --ink-raised: #161B22;
-  --ink-raised-2: #1C2129;
-  --fog: #C9D1D9;
-  --fog-dim: #7D8590;
-  --line: #30363D;
-  --signal: #4CC9F0;
-  --alert: #F5A623;
+  /* Minimal black/grey palette (monkeytype.com-style: flat, muted,
+     one warm accent used sparingly) rather than the earlier blue
+     "diagnostic HUD" look - deliberately no neon glows. */
+  --ink: #232323;
+  --ink-raised: #2c2c2c;
+  --ink-raised-2: #343434;
+  --fog: #d1d0c5;
+  --fog-dim: #6b6b6b;
+  --line: #3f3f3f;
+  --signal: #e2b714;
+  --signal-rgb: 226, 183, 20;
+  --alert: #ca4754;
+
+  /* the on-screen keyboard reuses the same accent now - was a separate
+     yellow before this became the whole app's theme */
+  --kb-accent: var(--signal);
+  --kb-accent-ink: #2a2110;
 
   --font-display: "Space Grotesk", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* region palette - shared conceptually with app.js REGION_COLORS */
+  /* region palette (face landmark overlay dots) - kept distinct from
+     the theme since these need to stay visually distinguishable from
+     each other, not match the app's accent */
   --c-left_eye: #4CC9F0;
   --c-right_eye: #7DE2D1;
   --c-mouth: #FF6B6B;
@@ -33,6 +44,70 @@ html, body {
 
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
+}
+
+/* ---------- dashboard (landing view) ---------- */
+
+.dashboard {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.dashboard__card {
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+}
+
+.dashboard__card h1 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 32px;
+  margin: 4px 0 12px;
+  color: #F0F0EE;
+  letter-spacing: -0.01em;
+}
+
+.dashboard__desc {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fog-dim);
+  margin: 0 0 28px;
+}
+
+.dashboard__status {
+  background: var(--ink-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 24px;
+  text-align: left;
+}
+
+.dashboard__status-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 6px 0;
+  color: var(--fog-dim);
+}
+
+.dashboard__status-row span:last-child {
+  color: var(--fog);
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard__status-row span:last-child.is-ok {
+  color: var(--signal);
+}
+
+.dashboard__cta {
+  width: 100%;
+  padding: 14px 0;
+  font-size: 14px;
 }
 
 /* ---------- topbar ---------- */
@@ -78,13 +153,13 @@ html, body {
   height: 8px;
   border-radius: 50%;
   background: var(--alert);
-  box-shadow: 0 0 0 3px rgba(245, 166, 35, 0.15);
+  box-shadow: 0 0 0 3px rgba(202, 71, 84, 0.15);
   transition: background 0.25s, box-shadow 0.25s;
 }
 
 .conn.is-live .conn__dot {
   background: var(--signal);
-  box-shadow: 0 0 0 3px rgba(76, 201, 240, 0.18);
+  box-shadow: 0 0 0 3px rgba(var(--signal-rgb), 0.18);
 }
 
 /* ---------- layout ---------- */
@@ -391,11 +466,11 @@ html, body {
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .btn--primary {
-  background: rgba(76, 201, 240, 0.1);
+  background: rgba(var(--signal-rgb), 0.1);
   border-color: var(--signal);
   color: var(--signal);
 }
-.btn--primary:hover { background: rgba(76, 201, 240, 0.18); }
+.btn--primary:hover { background: rgba(var(--signal-rgb), 0.18); }
 
 .btn--ghost { background: transparent; }
 
@@ -420,101 +495,71 @@ html, body {
 .cal-status.is-ok { color: var(--signal); }
 .cal-status.is-error { color: var(--alert); }
 
-/* ---------- on-screen keyboard ---------- */
+/* ---------- confirm / minimize button (launch page) ---------- */
 
-.kb-toggle {
+.confirm-setup {
   position: fixed;
-  right: 24px;
-  bottom: 24px;
+  right: 28px;
+  bottom: 28px;
   z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.03em;
-  color: var(--fog);
-  background: rgba(22, 27, 34, 0.55);
-  backdrop-filter: blur(14px) saturate(140%);
-  -webkit-backdrop-filter: blur(14px) saturate(140%);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 10px 16px;
-  cursor: pointer;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  transition: border-color 0.15s, color 0.15s;
-}
-
-.kb-toggle:hover { border-color: var(--signal); color: #F0F3F6; }
-
-.kb-toggle__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--fog-dim);
-  transition: background 0.2s, box-shadow 0.2s;
-}
-
-.kb-toggle.is-on .kb-toggle__dot {
-  background: var(--signal);
-  box-shadow: 0 0 0 3px rgba(76, 201, 240, 0.18);
-}
-
-.kb-panel {
-  position: fixed;
-  right: 24px;
-  bottom: 74px;
-  z-index: 20;
-  width: 300px;
-  background: rgba(22, 27, 34, 0.55);
-  backdrop-filter: blur(20px) saturate(140%);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  padding: 14px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
-  animation: kb-in 0.15s ease-out;
-}
-
-.kb-panel[hidden] { display: none; }
-
-@keyframes kb-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.kb-panel__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.kb-panel__title {
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--fog-dim);
-}
-
-.kb-panel__close {
-  background: none;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  background: var(--signal);
   border: none;
-  color: var(--fog-dim);
-  font-size: 16px;
-  line-height: 1;
+  border-radius: 10px;
+  padding: 14px 28px;
   cursor: pointer;
-  padding: 2px 4px;
+  box-shadow: 0 8px 24px rgba(var(--signal-rgb), 0.35);
+  transition: transform 0.1s, box-shadow 0.15s;
 }
 
-.kb-panel__close:hover { color: #F0F3F6; }
+.confirm-setup:hover { box-shadow: 0 10px 28px rgba(var(--signal-rgb), 0.5); }
+.confirm-setup:active { transform: translateY(1px); }
+
+/* ---------- on-screen keyboard ---------- */
+/*
+ * In the packaged desktop app, keyboard.html *is* a whole separate,
+ * frameless, translucent, always-on-top window (see desktop_app.py) -
+ * .kb-panel--window makes the panel fill that window edge-to-edge
+ * instead of floating inside a bigger page.
+ */
+
+.kb-panel--window {
+  width: 100%;
+  height: 100vh;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: rgba(35, 35, 35, 0.68);
+  backdrop-filter: blur(20px) saturate(120%);
+  -webkit-backdrop-filter: blur(20px) saturate(120%);
+  padding: 14px;
+  /* Low-opacity and slightly shrunk at rest so it stays out of the way
+     visually; hovering "brings it forward" (full opacity, full size)
+     rather than resizing the actual OS window, which would be jarring. */
+  opacity: 0.5;
+  transform: scale(0.94);
+  transform-origin: center;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.kb-panel--window:hover {
+  opacity: 0.98;
+  transform: scale(1);
+}
+
+.kb-window-body,
+.toggle-window-body {
+  background: transparent;
+}
 
 .kb-output {
   display: block;
   width: 100%;
+  flex-shrink: 0;
   background: rgba(0, 0, 0, 0.25);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -540,12 +585,14 @@ html, body {
 
 .kb-grid {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
+  grid-template-columns: repeat(11, 1fr);
+  grid-template-rows: repeat(7, 1fr);
   gap: 4px;
+  flex: 1;
+  min-height: 0; /* let the grid shrink to fit instead of overflowing the flex column */
 }
 
 .kb-key {
-  aspect-ratio: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -553,10 +600,13 @@ html, body {
   border: 1px solid var(--line);
   border-radius: 5px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
+  text-transform: none;
   color: var(--fog);
   cursor: pointer;
   transition: background 0.1s, border-color 0.1s, color 0.1s;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .kb-key:hover {
@@ -564,25 +614,128 @@ html, body {
   color: #F0F3F6;
 }
 
+/* navigation cursor - "you are here" */
 .kb-key.is-cursor {
-  background: rgba(76, 201, 240, 0.16);
+  background: rgba(var(--signal-rgb), 0.16);
   border-color: var(--signal);
   color: #F0F3F6;
-  box-shadow: 0 0 0 3px rgba(76, 201, 240, 0.12);
+  box-shadow: 0 0 0 3px rgba(var(--signal-rgb), 0.12);
 }
 
+/* confirm feedback - a second, distinct flash on top of the cursor
+   highlight so a confirmed press is unmistakably different from just
+   being navigated-to */
 .kb-key.is-confirmed {
   background: var(--signal);
   border-color: var(--signal);
   color: var(--ink);
 }
 
-.kb-hint {
-  margin: 10px 0 0;
-  font-size: 10.5px;
-  line-height: 1.5;
-  color: var(--fog-dim);
-  text-align: center;
+/* function keys (esc/tab/caps/enter/backspace/toggle/on-off) - the
+   reference design's yellow accent, distinct from plain character keys */
+.kb-key--function {
+  background: rgba(240, 194, 68, 0.14);
+  border-color: rgba(240, 194, 68, 0.4);
+  color: var(--kb-accent);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.kb-key--function:hover {
+  border-color: var(--kb-accent);
+  color: #FFE9AE;
+}
+
+.kb-key--function.is-cursor {
+  background: rgba(240, 194, 68, 0.28);
+  border-color: var(--kb-accent);
+  color: #FFE9AE;
+  box-shadow: 0 0 0 3px rgba(240, 194, 68, 0.18);
+}
+
+.kb-key--function.is-confirmed {
+  background: var(--kb-accent);
+  border-color: var(--kb-accent);
+  color: var(--kb-accent-ink);
+}
+
+/* caps latches "on" rather than just flashing - show that persistent
+   state distinctly from a one-shot confirm flash */
+.kb-key--function.is-active {
+  background: var(--kb-accent);
+  border-color: var(--kb-accent);
+  color: var(--kb-accent-ink);
+}
+
+/* predictive-text suggestion cells (top row) - real suggestions, so
+   these need to read clearly at a glance (not blend in like the
+   deliberately-blank bottom-row keys do) */
+.kb-key--suggestion {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04));
+  border-color: var(--line);
+  color: #F0F3F6;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+}
+
+.kb-key--suggestion:empty {
+  /* nothing matched the current prefix - fall back to the same
+     understated look as the intentionally-blank keys, so an empty
+     slot doesn't look like a rendering glitch */
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.kb-key--suggestion.is-cursor {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+
+/* bottom-row custom keys with no assigned function yet - deliberately
+   understated so they don't look broken, just intentionally empty */
+.kb-key--blank {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.kb-key--media {
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 15px;
+}
+
+/* ---------- left-edge toggle tab ---------- */
+/*
+ * Shown after Confirm hides the main calibration window; clicking it
+ * reopens that window. Docked flush to the left screen edge (see the
+ * window position/size desktop_app.py creates it with) so only a
+ * sliver is visible - deliberately unobtrusive during normal use.
+ */
+
+.toggle-tab {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0 10px 10px 0;
+  background: rgba(22, 27, 34, 0.7);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--signal);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 2px 0 12px rgba(0, 0, 0, 0.35);
+  transition: background 0.15s, color 0.15s;
+}
+
+.toggle-tab:hover {
+  background: rgba(var(--signal-rgb), 0.25);
+  color: #F0F3F6;
 }
 
 @media (max-width: 480px) {

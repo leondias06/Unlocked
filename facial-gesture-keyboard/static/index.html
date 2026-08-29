@@ -11,6 +11,34 @@
 </head>
 <body>
 
+<section class="dashboard" id="dashboardView">
+  <div class="dashboard__card">
+    <span class="eyebrow">FACIAL GESTURE KEYBOARD</span>
+    <h1>Dashboard</h1>
+    <p class="dashboard__desc">
+      Control this computer with facial gestures alone. Calibrate once,
+      then confirm to switch into keyboard mode.
+    </p>
+
+    <div class="dashboard__status">
+      <div class="dashboard__status-row">
+        <span>gestures calibrated</span>
+        <span id="dashCalibratedCount">&mdash;</span>
+      </div>
+      <div class="dashboard__status-row">
+        <span>classifier</span>
+        <span id="dashTrainedStatus">&mdash;</span>
+      </div>
+    </div>
+
+    <button class="btn btn--primary dashboard__cta" id="goToCalibrationBtn">
+      Calibrate
+    </button>
+  </div>
+</section>
+
+<div id="calibrationView" hidden>
+
 <header class="topbar">
   <div class="topbar__title">
     <span class="eyebrow">GESTURE KEYBOARD &middot; CV PIPELINE</span>
@@ -76,12 +104,6 @@
       <p class="note" id="eventLogEmpty">Calibrate and train below to start seeing live gesture events here.</p>
     </div>
 
-    <div class="divider"></div>
-
-    <p class="note">
-      Step 2 of the build: calibrating and classifying gestures. Wiring
-      fired events to the on-screen keyboard is the next step after this.
-    </p>
   </aside>
 
 </main>
@@ -109,21 +131,11 @@
   </div>
 </section>
 
-<button class="kb-toggle" id="kbToggle" title="Toggle on-screen keyboard (K)">
-  <span class="kb-toggle__dot"></span>
-  Keyboard
+<button class="confirm-setup" id="confirmSetupBtn" title="Confirm calibration and switch to keyboard mode">
+  Confirm
 </button>
 
-<section class="kb-panel" id="kbPanel" hidden>
-  <header class="kb-panel__header">
-    <span class="kb-panel__title">On-Screen Keyboard</span>
-    <button class="kb-panel__close" id="kbClose" title="Hide keyboard">&times;</button>
-  </header>
-  <textarea class="kb-output" id="kbOutput" readonly rows="2"
-    placeholder="Typed text appears here…"></textarea>
-  <div class="kb-grid" id="kbGrid"></div>
-  <p class="kb-hint">up/down/left/right move &middot; confirm clicks the highlighted key &middot; backspace deletes &middot; keys are also clickable directly</p>
-</section>
+</div>
 
 <script src="app.js"></script>
 </body>

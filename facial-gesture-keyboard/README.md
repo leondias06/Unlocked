@@ -6,17 +6,23 @@ This covers the first two working pieces of the hackathon project:
    server, which runs face landmark detection (MediaPipe) and draws the
    landmarks live on screen.
 2. **Calibration + gesture classification** — record a few seconds of
-   each of the 6 target gestures (up/down/left/right/confirm/backspace)
-   plus a neutral face, train a lightweight classifier on the spot, and
-   see discrete gesture events fire live as you repeat them.
-3. **On-screen keyboard** — a compact, translucent directional-scanning
-   keyboard (toggle with the button in the corner, or press **K**).
-   up/down/left/right move the highlighted cursor, confirm types the
-   highlighted key, backspace deletes. It types **real OS-level
-   keystrokes** (via `pynput`), so it drives whatever window actually
-   has focus — not just the browser tab. See "On-screen keyboard"
-   below for platform notes.
-4. **Standalone desktop app** — `build.spec` packages the whole thing
+   each of the 9 target gestures plus a neutral face, train a
+   lightweight classifier on the spot, and see discrete gesture events
+   fire live as you repeat them. Six are for **keyboard mode**
+   (up/down/left/right/confirm/backspace); three are for **eye/mouse
+   mode** (left_click/right_click/switch_to_keyboard). Only one mode's
+   gestures are ever listened to at a time - see "Modes" below.
+3. **On-screen keyboard** — matches the reference layout (11x7 grid,
+   esc/tab/caps/enter/backspace, a numbers/symbols column, function
+   row). It types **real OS-level keystrokes** (via `pynput`), so it
+   drives whatever window actually has focus - not just the browser
+   tab. See "On-screen keyboard" below for platform notes.
+4. **Three modes** (setup / keyboard / eye) - a dashboard you calibrate
+   from, a Confirm button that switches into keyboard mode, an
+   on-screen key that switches to eye/mouse mode, and a dedicated
+   gesture to switch back. See "Modes" below - this is the part most
+   worth reading carefully before changing anything here.
+5. **Standalone desktop app** — `build.spec` packages the whole thing
    into a single `.exe`: a real app window (no browser, no address
    bar), no Python install required to run it, and no network access
    needed at runtime at all. See "Standalone desktop app" below.
@@ -28,7 +34,7 @@ There's no hardcoded rule like "eyebrow raise = up". Instead, you pick
 doesn't need to resemble the real gesture at all — and the calibration
 step records what that looks like in landmark-feature space. A small
 k-nearest-neighbors classifier (`gestures.py`) then learns to tell your
-7 recorded patterns apart. This matters for the target users: which
+10 recorded patterns apart. This matters for the target users: which
 facial movements are reliably controllable varies a lot person to
 person, so the mapping is learned per-user rather than assumed.
 
@@ -88,15 +94,24 @@ such issue.)
 
 ## 3. Calibrate
 
-Scroll down to the **Calibration** panel. For each of the 7 rows
-(`neutral`, `up`, `down`, `left`, `right`, `confirm`, `backspace`):
+From the dashboard, click **Calibrate**. For each of the 10 rows -
+`neutral`, then the 6 **keyboard-mode** gestures
+(`up`, `down`, `left`, `right`, `confirm`, `backspace`), then the 3
+**eye-mode** gestures (`left_click`, `right_click`,
+`switch_to_keyboard`):
 
 1. Decide what facial movement you'll use for that action.
 2. Click **Record**, hold/repeat that movement for a few seconds
    (watch the counter climb — aim for well past the minimum shown).
 3. Click **Record** again to stop.
 
-For `neutral`, just hold a relaxed, resting face.
+For `neutral`, just hold a relaxed, resting face. Keyboard-mode and
+eye-mode gestures are never listened to at the same time (see "Modes"
+below), so it's fine if a movement you pick for one feels similar to
+one you picked for the other - they'll never be classified against
+each other in practice. `switch_to_keyboard` is the *only* gesture
+eye mode listens for besides the two clicks; there's no gesture to
+leave keyboard mode - that's the on-screen `toggle` key instead.
 
 Once every row is past its minimum, click **Train Classifier**. If it
 succeeds, stop recording and just make your gestures naturally — fired
@@ -109,15 +124,90 @@ re-record with a more exaggerated or more consistent version of the
 movement — the classifier is only as good as how repeatable the
 recorded samples are.
 
-## 4. On-screen keyboard
+## 4. Modes
 
-Toggle it with the button in the bottom-right corner, or press **K**.
-Once it's open, up/down/left/right move the cursor over the grid,
-confirm types the highlighted key, and backspace deletes.
+There are three modes, and this is the part of the whole project most
+likely to be misread, so it's worth being precise about it:
 
-Typed text also lands in a real, selectable/copyable textbox right in
-the keyboard panel - that part is plain client-side JavaScript, so it
-works identically no matter how this is hosted or run.
+- **setup** - the dashboard/calibration window is visible; nothing
+  else is. The app starts here. Reachable from either other mode via
+  the small tab docked to the left screen edge.
+- **keyboard** - the on-screen keyboard overlay is visible and
+  receives the 6 keyboard-mode gestures. Entered from **setup** by
+  clicking **Confirm** (which turns the keyboard on *and* minimizes
+  the dashboard to the left-edge tab, in one step). The *only* way out
+  of keyboard mode is the on-screen **`toggle`** key inside the
+  keyboard grid itself (navigate to it, confirm, like any other key) -
+  there is deliberately no gesture for this direction.
+- **eye** - eye/gaze cursor mode (the actual gaze-to-cursor tracking is
+  a separate, later piece of work - this mode already exists and
+  already routes its gestures correctly, it just doesn't move the
+  cursor with your eyes yet). Receives `left_click`/`right_click` (real
+  OS mouse clicks) and `switch_to_keyboard`, which is the *only* way
+  back to keyboard mode - deliberately a gesture, not a button, since
+  there's no keyboard visible to click one on.
+
+Keyboard-mode gestures and eye-mode gestures are never listened to at
+the same time - firing a keyboard-mode gesture while in eye mode (or
+vice versa) is simply ignored. See `windows.DesktopWindows` for the
+actual state machine; `on_gesture()` there is the one place that
+enforces this.
+
+## 5. On-screen keyboard
+
+The keyboard is its own page/window (`static/keyboard.html` +
+`keyboard.js`), separate from the dashboard/calibration page - in the
+standalone desktop app it's a real, always-on-top overlay so it can
+float over whatever app you're actually typing into. In plain-browser
+dev mode there's no window management to speak of - open
+`/keyboard.html` directly in a second tab to exercise it standalone.
+
+up/down/left/right move the cursor over the grid, confirm types the
+highlighted key, backspace deletes. Typed text also lands in a real,
+selectable/copyable textbox right in the keyboard panel - that part is
+plain client-side JavaScript, so it works identically no matter how
+this is hosted or run.
+
+**Held-gesture auto-repeat:** up/down/left/right and backspace behave
+like a held key on a physical keyboard - hold the gesture and, after a
+short initial delay (~450ms), it keeps firing on its own every ~150ms
+until you release, instead of requiring a full return-to-neutral
+between every single step. This is what actually makes scanning across
+an 11x7 grid fast enough to use; without it, moving from one corner to
+the other means holding-and-releasing the same gesture a dozen times.
+confirm and the eye-mode gestures (left/right click,
+`switch_to_keyboard`) deliberately stay one-shot-per-hold - repeating
+those while held would mean an accidental extra keystroke, click, or
+mode flicker. See `GestureDebouncer` in `gestures.py`.
+
+The layout is an 11x7 grid matching the reference design: plain A-Z
+reading order (not QWERTY) with a numbers/symbols column, `caps` and
+`enter` each spanning two rows, `esc`/`tab`/`backspace` as real
+keystrokes, and a bottom function row. **caps** is a local shift-style
+toggle - it doesn't touch the real OS caps lock state, it just decides
+whether confirming a letter/number key types the upper or lower
+variant (numbers show their shifted symbol, e.g. `1`/`!`, the same
+way). The top row's 5 gradient cells are real predictive-text
+suggestions now: a bundled offline word list (no network calls, same as
+everything else here) is prefix-matched against whatever you're
+currently typing (the run of letters since the last space), ranked
+most-common-first, and confirming one backspaces out the in-progress
+word and types the full suggestion plus a trailing space - both in the
+on-page textbox and, via the same real keystrokes as everything else,
+into whatever window has OS focus. It's a small hand-picked ~1000-word
+pool (common English words plus everyday-needs vocabulary like
+"hungry"/"bathroom"/"hurt", since this app exists for people who may
+have no other way to communicate a basic need) rather than a proper
+frequency corpus, so treat it as a solid demo-quality baseline, not a
+finished autocomplete engine - swapping in a real frequency-ranked word
+list (or per-user learning) is a natural next step. The bottom row's
+plain cells are intentionally blank custom keys
+(navigable, selectable, do nothing - no setup UI, per spec); `sound
+up/down` send real OS media-key presses, `brightness up/down` adjust
+the display via WMI where the hardware supports it (most laptop
+panels; many external monitors don't) and silently no-op otherwise.
+`toggle` switches to eye mode (see "Modes" above) - this is real and
+wired up, not a placeholder. `on | off` still is.
 
 Separately, it *also* uses `pynput` on the *server* to synthesize real
 keystrokes at the OS level, so it can type into whichever window
@@ -145,15 +235,54 @@ Arrow keys / Enter / Backspace on your physical keyboard drive the same
 code path as the gesture events, so you can test the whole keyboard
 (including real OS typing) without a trained classifier.
 
-## 5. Standalone desktop app
+## 6. Standalone desktop app
 
 `python run.py` is great for development, but it's still "open a
 terminal, run a command, open a browser tab." `desktop_app.py` +
-`build.spec` package the whole app into a single `.exe` that opens as
-a real app window (via [pywebview](https://pywebview.flowrite.com/)),
-needs no Python install, and makes **no network calls at all** at
-runtime - the MediaPipe model is bundled into the build instead of
-downloaded on first run.
+`build.spec` package the whole app into three real native windows (via
+[pywebview](https://pywebview.flowrite.com/)) instead:
+
+The app is a small state machine with three modes - `setup`, `keyboard`
+and `eye` (see "Modes" above) - and the three windows just reflect
+whichever mode is active:
+
+1. The **launch/calibration window** starts in `setup` mode - camera +
+   calibration UI (now behind a dashboard, see "Modes") + a **Confirm**
+   button.
+2. Clicking Confirm hides that window and switches to `keyboard` mode:
+   the **keyboard overlay** appears, and a small **tab docked to the
+   left screen edge** appears with it. That tab's only job now is to
+   reopen calibration (back to `setup` mode) - it does not toggle the
+   keyboard.
+3. From `keyboard` mode, the keyboard's own on-screen **toggle key**
+   switches to `eye` mode (keyboard hides). From `eye` mode, the
+   `switch_to_keyboard` gesture switches back to `keyboard` mode (no
+   on-screen button for this direction, by design - see "Modes" above
+   for why the split is deliberate). Gestures are mode-gated: the six
+   keyboard-navigation gestures only act while in `keyboard` mode, and
+   `left_click`/`right_click`/`switch_to_keyboard` only act while in
+   `eye` mode, so a stray gesture from the "wrong" mode is silently
+   ignored rather than doing something unexpected.
+
+The keyboard overlay is engineered to never steal OS keyboard focus
+when it appears, so gesture-typed keystrokes keep landing in whatever
+app (Word, a browser, ...) you were actually using - see `windows.py`
+for exactly how (`WS_EX_NOACTIVATE` plus an immediate focus-restore,
+since `Show()` always activates a window once regardless of that
+style; verified this holds even with the overlaid page actively
+re-rendering, and separately verified that hiding a window does **not**
+throttle its camera/JS loop the way a backgrounded browser tab would,
+so gesture recognition keeps working while a window is hidden).
+
+No Python install is needed to run the built `.exe`, and it makes **no
+network calls at all** at runtime - the MediaPipe model is bundled into
+the build instead of downloaded on first run.
+
+Known follow-up: the overlay windows currently use solid (not truly
+see-through) translucent-styled backgrounds - real OS-level window
+transparency (`transparent=True`) wasn't confirmed working reliably in
+testing, so it was left for a later pass rather than risk a broken
+window.
 
 Build it (from an activated venv):
 ```powershell
@@ -179,11 +308,11 @@ set `console=True` in the `EXE(...)` call, rebuild, and run it from a
 terminal instead of double-clicking - the console window will show
 tracebacks that a windowed app otherwise swallows.
 
-## 6. What to check as a team
+## 7. What to check as a team
 
 - **Detection reliability:** does tracking stay stable as you move,
   turn your head, or change lighting?
-- **Gesture separability:** are the 6 gestures + neutral easy to tell
+- **Gesture separability:** are the 9 gestures + neutral easy to tell
   apart in practice, or do some get confused with each other? If two
   gestures keep firing as each other, they're probably too similar in
   landmark-feature space — pick more distinct movements for them.
@@ -194,7 +323,7 @@ tracebacks that a windowed app otherwise swallows.
 - **Multiple machines/webcams:** worth testing on all 3 laptops now,
   since webcam quality and lighting varies.
 
-## 7. If it's too slow (latency > ~200ms)
+## 8. If it's too slow (latency > ~200ms)
 
 The current setup sends JPEG frames over a WebSocket to a Python
 backend. If that round trip is too slow for responsive gesture control,
@@ -203,14 +332,17 @@ JavaScript build directly in the browser instead, avoiding the network
 hop entirely. Flag this early rather than late — it's a meaningful
 rework, not a tweak.
 
-## 8. Project layout
+## 9. Project layout
 
 ```
 facial-gesture-keyboard/
   run.py                 Dev server launcher (use this, not `uvicorn --reload` -
                           see "Run" above for why)
   desktop_app.py          Standalone-app entry point: runs the server in a
-                          background thread, opens it in a native window
+                          background thread, creates the 3 native windows
+  windows.py              Window orchestration: confirm/minimize, the
+                          left-edge toggle tab, and the focus-preserving
+                          keyboard overlay show/hide
   build.spec              PyInstaller build config for the standalone .exe
   main.py               FastAPI server: WebSocket endpoint, MediaPipe inference,
                          calibration protocol handling
@@ -220,8 +352,11 @@ facial-gesture-keyboard/
   requirements.txt
   requirements-build.txt  Adds pyinstaller, only needed to build the .exe
   static/
-    index.html            Page structure (tracking view, telemetry, calibration panel)
-    style.css              Visual design
+    index.html            Launch/calibration page (tracking, telemetry,
+                          calibration panel, Confirm button)
+    keyboard.html/.js      The on-screen keyboard - its own page/window
+    toggle.html             The small left-edge "reopen calibration" tab
+    style.css              Visual design (shared by all three pages)
     app.js                  Camera capture, WebSocket client, landmark drawing,
                             calibration UI wiring
   face_landmarker.task   (auto-downloaded on first run, not checked into git)
@@ -230,7 +365,7 @@ facial-gesture-keyboard/
                           "Standalone desktop app" above)
 ```
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 - **`ModuleNotFoundError`** — make sure the venv is activated before
   running `uvicorn`, and that you're consistently using either the venv
@@ -282,6 +417,11 @@ facial-gesture-keyboard/
   those packages changes how it loads resources, PyInstaller may miss
   something new. Rebuild with `console=True` (see "Standalone desktop
   app" above) to see the actual traceback instead of a silent exit.
+- **`pyinstaller build.spec` fails with `PermissionError: [WinError 5]
+  Access is denied`** — this means a previous build of
+  `FacialGestureKeyboard.exe` is still running (including a copy you
+  launched yourself to test) and Windows has the file locked. Close
+  every running instance first, then rebuild.
 - **The `.exe` opens but the window closes immediately / never shows
   the page** — same fix: flip `console=True` in `build.spec`, rebuild,
   and run from a terminal to see what actually failed.

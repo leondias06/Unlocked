@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Toggle</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body class="toggle-window-body">
+<button class="toggle-tab" id="toggleTab" title="Reopen calibration">&rsaquo;</button>
+<script>
+  document.getElementById("toggleTab").addEventListener("click", () => {
+    window.pywebview.api.reopen_calibration();
+  });
+</script>
+</body>
+</html>

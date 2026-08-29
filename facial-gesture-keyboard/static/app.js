@@ -48,6 +48,12 @@ const trainBtn = document.getElementById("trainBtn");
 const resetAllBtn = document.getElementById("resetAllBtn");
 const trainStatus = document.getElementById("trainStatus");
 
+const dashboardView = document.getElementById("dashboardView");
+const calibrationView = document.getElementById("calibrationView");
+const goToCalibrationBtn = document.getElementById("goToCalibrationBtn");
+const dashCalibratedCount = document.getElementById("dashCalibratedCount");
+const dashTrainedStatus = document.getElementById("dashTrainedStatus");
+
 const sendCanvas = document.createElement("canvas");
 sendCanvas.width = SEND_WIDTH;
 sendCanvas.height = SEND_HEIGHT;
@@ -218,7 +224,25 @@ function handleConfig(msg) {
     trainStatus.textContent = "Classifier already trained from saved samples.";
     trainStatus.classList.add("is-ok");
   }
+  updateDashboardStatus(msg.ready, msg.counts);
 }
+
+// ---------------------------------------------------------------- dashboard
+
+function updateDashboardStatus(ready, counts) {
+  const total = allLabels.length;
+  const readyCount = counts
+    ? Object.values(counts).filter((c) => c >= minSamplesPerLabel).length
+    : 0;
+  dashCalibratedCount.textContent = total ? `${readyCount} / ${total}` : "—";
+  dashTrainedStatus.textContent = ready ? "trained" : "not trained yet";
+  dashTrainedStatus.classList.toggle("is-ok", !!ready);
+}
+
+goToCalibrationBtn.addEventListener("click", () => {
+  dashboardView.hidden = true;
+  calibrationView.hidden = false;
+});
 
 function buildCalibrationRows() {
   calRows.innerHTML = "";
@@ -309,6 +333,7 @@ function handleTrainResult(msg) {
       updateRowProgress(label, count);
     }
   }
+  updateDashboardStatus(msg.status === "ok", msg.counts);
 }
 
 function handleGestureEvent(msg) {
@@ -334,7 +359,13 @@ function handleGestureEvent(msg) {
     eventLog.removeChild(eventLog.lastChild);
   }
 
-  if (kbOn) applyGestureToKeyboard(msg.label);
+  // Gesture routing (show/hide the keyboard overlay, forward moves to
+  // it) is handled in Python (desktop_app.py), since the keyboard is a
+  // separate window from this one. In plain-browser dev mode (no
+  // pywebview), there's nothing to forward to.
+  if (window.pywebview?.api?.on_gesture) {
+    window.pywebview.api.on_gesture(msg.label);
+  }
 }
 
 function handleResetOk() {
@@ -459,152 +490,23 @@ function drawScanLine(w, h) {
   ctx.fillRect(0, y - 40, w, 80);
 }
 
-// ---------------------------------------------------------------- on-screen keyboard
+// ---------------------------------------------------------------- confirm / minimize
 //
-// A directional-scanning grid: up/down/left/right move a 2D cursor over
-// this layout, "confirm" types the highlighted key, "backspace" deletes
-// the last typed character. Physical arrow keys / Enter / Backspace / "K"
-// are also wired below so this can be exercised without a trained model.
+// The on-screen keyboard itself lives in a separate window now (see
+// keyboard.html/keyboard.js) so it can float over other apps. This page
+// is just the calibration/launch UI: confirming here hands off to
+// Python (desktop_app.py) to hide this window and show the small
+// left-edge toggle tab instead.
 
-// "⏎" is a distinct Enter key, not a regular character - confirmKey()
-// special-cases it to send a real Enter keystroke instead of typing the
-// glyph itself.
-const KEY_LAYOUT = [
-  ["A", "B", "C", "D", "E", "F", "G", "H"],
-  ["I", "J", "K", "L", "M", "N", "O", "P"],
-  ["Q", "R", "S", "T", "U", "V", "W", "X"],
-  ["Y", "Z", ",", ".", "?", "!", "␣", "⏎"],
-];
-
-const kbToggle = document.getElementById("kbToggle");
-const kbPanel = document.getElementById("kbPanel");
-const kbClose = document.getElementById("kbClose");
-const kbOutput = document.getElementById("kbOutput");
-const kbGrid = document.getElementById("kbGrid");
-
-let kbOn = false;
-let kbRow = 0;
-let kbCol = 0;
-let typedText = "";
-let kbKeyEls = [];
-
-function buildKeyboardGrid() {
-  kbGrid.innerHTML = "";
-  kbKeyEls = KEY_LAYOUT.map((rowChars, r) =>
-    rowChars.map((ch, c) => {
-      const el = document.createElement("div");
-      el.className = "kb-key";
-      el.textContent = ch;
-      // Every key is directly clickable, same as any other virtual
-      // keyboard - "confirm" (gesture or physical Enter, for testing)
-      // just does the same thing to whatever the cursor is already on.
-      el.addEventListener("click", () => {
-        kbRow = r;
-        kbCol = c;
-        renderCursor();
-        confirmKey();
-      });
-      kbGrid.appendChild(el);
-      return el;
-    })
-  );
-  renderCursor();
-}
-
-function renderCursor() {
-  for (const row of kbKeyEls) {
-    for (const el of row) el.classList.remove("is-cursor");
-  }
-  kbKeyEls[kbRow][kbCol].classList.add("is-cursor");
-}
-
-function renderOutput() {
-  // A real <textarea> - not just a styled preview - so the typed text is
-  // genuinely usable (select, copy, paste elsewhere) without depending on
-  // the server. This is the one part of the keyboard that works the same
-  // on localhost and on a real public deployment: it's plain client-side
-  // JS, with no dependency on OS-level access to the visitor's machine.
-  kbOutput.value = typedText;
-  kbOutput.scrollTop = kbOutput.scrollHeight;
-}
-
-function moveCursor(dir) {
-  const rows = KEY_LAYOUT.length;
-  const cols = KEY_LAYOUT[0].length;
-  if (dir === "up") kbRow = (kbRow - 1 + rows) % rows;
-  else if (dir === "down") kbRow = (kbRow + 1) % rows;
-  else if (dir === "left") kbCol = (kbCol - 1 + cols) % cols;
-  else if (dir === "right") kbCol = (kbCol + 1) % cols;
-  renderCursor();
-}
-
-function confirmKey() {
-  const ch = KEY_LAYOUT[kbRow][kbCol];
-
-  if (ch === "⏎") {
-    typedText += "\n";
-    renderOutput();
-    send({ type: "kb_enter" }); // real Enter keystroke, not a typed character
+const confirmSetupBtn = document.getElementById("confirmSetupBtn");
+confirmSetupBtn.addEventListener("click", () => {
+  if (window.pywebview?.api?.confirm_calibration) {
+    window.pywebview.api.confirm_calibration();
   } else {
-    const typedChar = ch === "␣" ? " " : ch;
-    typedText += typedChar;
-    renderOutput();
-    send({ type: "kb_type", char: typedChar }); // actually types into whatever has OS focus
-  }
-
-  const el = kbKeyEls[kbRow][kbCol];
-  el.classList.add("is-confirmed");
-  setTimeout(() => el.classList.remove("is-confirmed"), 150);
-}
-
-function backspaceKey() {
-  typedText = typedText.slice(0, -1);
-  renderOutput();
-  send({ type: "kb_backspace" });
-}
-
-function applyGestureToKeyboard(label) {
-  if (label === "up" || label === "down" || label === "left" || label === "right") {
-    moveCursor(label);
-  } else if (label === "confirm") {
-    confirmKey();
-  } else if (label === "backspace") {
-    backspaceKey();
-  }
-}
-
-function setKeyboardOn(on) {
-  kbOn = on;
-  kbPanel.hidden = !on;
-  kbToggle.classList.toggle("is-on", on);
-  if (on) renderCursor();
-}
-
-kbToggle.addEventListener("click", () => setKeyboardOn(!kbOn));
-kbClose.addEventListener("click", () => setKeyboardOn(false));
-
-document.addEventListener("keydown", (e) => {
-  if (e.key === "k" || e.key === "K") {
-    setKeyboardOn(!kbOn);
-    return;
-  }
-  if (!kbOn) return;
-
-  const dirs = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
-  if (dirs[e.key]) {
-    e.preventDefault();
-    moveCursor(dirs[e.key]);
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    confirmKey();
-  } else if (e.key === "Backspace") {
-    e.preventDefault();
-    backspaceKey();
+    // Plain-browser dev mode: nothing to minimize to, just no-op.
+    console.log("confirm_calibration: no pywebview API available (dev mode)");
   }
 });
-
-buildKeyboardGrid();
-renderOutput();
 
 // ---------------------------------------------------------------- boot
 

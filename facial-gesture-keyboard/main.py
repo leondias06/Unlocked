@@ -13,6 +13,8 @@ camera or the MediaPipe model.
 
 import base64
 import json
+import subprocess
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -109,11 +111,69 @@ async def no_cache(request, call_next):
 # restarting the process out from under an in-progress calibration.
 calibration_store = gestures.CalibrationStore()
 
+# Set by the desktop app (windows.DesktopWindows) whenever its mode
+# changes, so live classification can restrict itself to only the
+# gestures reachable from the current mode (see CalibrationStore.predict
+# in gestures.py for why that's more than cosmetic). Stays "setup" in
+# plain browser/dev mode, where there's no DesktopWindows at all - that
+# maps to "no restriction" below, same as the real setup/calibration
+# screen, which needs to keep recognizing every label.
+active_mode: str = "setup"
+
+MODE_ALLOWED_LABELS = {
+    "keyboard": {gestures.NEUTRAL_LABEL, *gestures.KEYBOARD_MODE_GESTURES},
+    "eye": {gestures.NEUTRAL_LABEL, *gestures.EYE_MODE_GESTURES},
+}
+
+
+def set_active_mode(mode: str) -> None:
+    global active_mode
+    active_mode = mode
+
+
 # Types real OS-level keystrokes so the on-screen keyboard can drive
 # whatever application actually has focus, not just this browser tab.
 # The frontend owns the grid/cursor UI and tells us over the websocket
 # what to type - it's the one source of truth for what's highlighted.
 keyboard_controller = KeyboardController()
+
+# Simple named special keys the keyboard can request via "kb_special" -
+# tab/esc/volume are all real, universal virtual keys pynput supports
+# directly. Brightness isn't in this map: unlike volume, there's no
+# standard cross-hardware virtual key for it, so it's handled separately
+# via WMI (see set_brightness_step) with a graceful no-op fallback on
+# displays that don't support it.
+SPECIAL_KEYS = {
+    "tab": Key.tab,
+    "esc": Key.esc,
+    "volume_up": Key.media_volume_up,
+    "volume_down": Key.media_volume_down,
+}
+
+
+def set_brightness_step(delta: int) -> None:
+    """
+    Best-effort brightness adjustment via WMI - only works for displays
+    that expose the standard WmiMonitorBrightness class (most laptop
+    panels; many external monitors don't). Shells out to PowerShell
+    rather than adding a pywin32/wmi dependency for one feature; runs on
+    a background thread since it's a slow subprocess call and the
+    WebSocket loop shouldn't block on it.
+    """
+    script = (
+        "$b = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness -ErrorAction Stop; "
+        f"$target = [Math]::Max(0, [Math]::Min(100, [int]$b.CurrentBrightness + ({delta}))); "
+        "$m = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop; "
+        "Invoke-CimMethod -InputObject $m -MethodName WmiSetBrightness -Arguments @{Timeout=1; Brightness=$target} | Out-Null"
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            timeout=5,
+            capture_output=True,
+        )
+    except Exception:
+        pass  # not all displays support this - fail silently, same as the blank function keys
 
 # Landmark index groups we'll care about once we build gesture
 # classification. Kept here now so the frontend can already highlight
@@ -246,6 +306,17 @@ async def ws_endpoint(websocket: WebSocket):
                 keyboard_controller.tap(Key.enter)
                 continue
 
+            if msg_type == "kb_special":
+                special = SPECIAL_KEYS.get(msg.get("key", ""))
+                if special:
+                    keyboard_controller.tap(special)
+                continue
+
+            if msg_type == "kb_brightness":
+                delta = msg.get("delta", 0)
+                threading.Thread(target=set_brightness_step, args=(delta,), daemon=True).start()
+                continue
+
             # --- video frame: tracking + (capture or live classify) --
 
             if msg_type == "frame":
@@ -275,8 +346,11 @@ async def ws_endpoint(websocket: WebSocket):
                     response["capture_label"] = capture_label
                     response["capture_count"] = count
                 elif calibration_store.ready:
-                    # Live mode: classify, then debounce into a discrete event.
-                    pred, confidence = calibration_store.predict(features)
+                    # Live mode: classify (restricted to the current
+                    # mode's labels, if any), then debounce into a
+                    # discrete event.
+                    allowed = MODE_ALLOWED_LABELS.get(active_mode)
+                    pred, confidence = calibration_store.predict(features, allowed_labels=allowed)
                     response["prediction"] = pred
                     response["confidence"] = round(confidence, 2)
 

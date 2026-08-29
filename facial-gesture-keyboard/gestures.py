@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -23,7 +24,15 @@ from sklearn.neighbors import KNeighborsClassifier
 
 # ---------------------------------------------------------------- config
 
-GESTURE_LABELS = ["up", "down", "left", "right", "confirm", "backspace"]
+KEYBOARD_MODE_GESTURES = ["up", "down", "left", "right", "confirm", "backspace"]
+EYE_MODE_GESTURES = ["left_click", "right_click", "switch_to_keyboard"]
+
+# Keyboard-mode and eye-mode gestures are mutually exclusive by design
+# (only one mode's gestures are ever listened to at a time - see
+# windows.DesktopWindows.on_gesture) but are still calibrated as
+# distinct labels here, so the same physical facial movement isn't
+# forced to mean two different things.
+GESTURE_LABELS = [*KEYBOARD_MODE_GESTURES, *EYE_MODE_GESTURES]
 NEUTRAL_LABEL = "neutral"
 ALL_LABELS = [NEUTRAL_LABEL, *GESTURE_LABELS]
 
@@ -32,6 +41,16 @@ K_NEIGHBORS = 5
 CONFIDENCE_THRESHOLD = 0.6   # predictions below this are treated as "unsure" -> neutral
 HOLD_FRAMES_TO_FIRE = 3      # consecutive matching predictions needed before a gesture fires
 NEUTRAL_FRAMES_TO_REARM = 2  # consecutive neutral frames needed before the next gesture can fire
+
+# Gestures that auto-repeat while held, instead of requiring a return to
+# neutral between each fire - navigation and backspace behave like a
+# held arrow/delete key on a physical keyboard, which matters a lot for
+# scanning speed across an 11x7 grid. confirm/click/mode-switch
+# deliberately stay one-shot-per-hold: repeating those while held would
+# mean an accidental extra keystroke, extra click, or a mode flicker.
+REPEATABLE_LABELS = {"up", "down", "left", "right", "backspace"}
+REPEAT_INITIAL_DELAY_S = 0.45  # time held before auto-repeat kicks in, like OS key-repeat
+REPEAT_INTERVAL_S = 0.15       # time between repeats once it's kicked in
 
 # ---------------------------------------------------------------- landmark indices
 #
@@ -218,13 +237,39 @@ class CalibrationStore:
         self.ready = True
         return {"status": "ok", "message": "Classifier trained.", "counts": counts}
 
-    def predict(self, features: list[float]) -> tuple[str | None, float]:
+    def predict(
+        self, features: list[float], allowed_labels: set[str] | None = None
+    ) -> tuple[str | None, float]:
+        """
+        allowed_labels restricts which labels can win, e.g. while the
+        desktop app is in keyboard mode only the 6 keyboard-mode labels
+        (+ neutral) are ever candidates - left_click/right_click/
+        switch_to_keyboard aren't just ignored downstream, they're not
+        competing for probability mass at all. This matters beyond
+        tidiness: without it, a frame that's genuinely a clean "confirm"
+        can still lose to a superficially-similar out-of-mode gesture in
+        the raw argmax, so keyboard-mode presses get eaten by an eye-
+        mode gesture that could never legally fire anyway. Restricting
+        first means the confidence returned reflects how well the frame
+        matches the gestures that are actually reachable right now.
+        None (the default - dev/browser mode with no concept of "mode",
+        or the setup/calibration screen, which needs to keep recognizing
+        every label) means no restriction, matching the old behavior.
+        """
         if not self.ready or self.classifier is None:
             return None, 0.0
-        pred = self.classifier.predict([features])[0]
         proba = self.classifier.predict_proba([features])[0]
-        confidence = float(max(proba))
-        return pred, confidence
+        classes = self.classifier.classes_
+
+        if allowed_labels is None:
+            idx = int(np.argmax(proba))
+            return classes[idx], float(proba[idx])
+
+        allowed_mask = np.array([c in allowed_labels for c in classes])
+        if not allowed_mask.any():
+            return None, 0.0
+        idx = int(np.argmax(np.where(allowed_mask, proba, -1.0)))
+        return classes[idx], float(proba[idx])
 
 
 # ---------------------------------------------------------------- debouncing
@@ -244,6 +289,8 @@ class GestureDebouncer:
         self.hold_count: int = 0
         self.neutral_count: int = 0
         self.armed: bool = True
+        self.fired_at: float | None = None       # monotonic time of this hold's first fire
+        self.last_repeat_at: float | None = None
 
     def update(self, pred: str | None, confidence: float) -> str | None:
         """Feed one prediction in. Returns a gesture label if one just fired."""
@@ -252,6 +299,7 @@ class GestureDebouncer:
         if is_neutral_ish:
             self.neutral_count += 1
             self.hold_label, self.hold_count = None, 0
+            self.fired_at, self.last_repeat_at = None, None
             if self.neutral_count >= NEUTRAL_FRAMES_TO_REARM:
                 self.armed = True
             return None
@@ -261,10 +309,31 @@ class GestureDebouncer:
             self.hold_count += 1
         else:
             self.hold_label, self.hold_count = pred, 1
+            self.fired_at, self.last_repeat_at = None, None
 
         if self.armed and self.hold_count >= HOLD_FRAMES_TO_FIRE:
             self.armed = False
             self.hold_count = 0
+            now = time.monotonic()
+            self.fired_at, self.last_repeat_at = now, now
             return pred
+
+        # Still holding the same gesture past its initial fire: for
+        # repeatable labels, keep re-firing at a fixed interval instead
+        # of waiting for a return to neutral, like a held OS key.
+        if (
+            not self.armed
+            and pred == self.hold_label
+            and pred in REPEATABLE_LABELS
+            and self.fired_at is not None
+            and self.last_repeat_at is not None
+        ):
+            now = time.monotonic()
+            if (
+                now - self.fired_at >= REPEAT_INITIAL_DELAY_S
+                and now - self.last_repeat_at >= REPEAT_INTERVAL_S
+            ):
+                self.last_repeat_at = now
+                return pred
 
         return None
