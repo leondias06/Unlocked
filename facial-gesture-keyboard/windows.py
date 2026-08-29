@@ -176,17 +176,20 @@ class DesktopWindows:
         pct = round((confidence or 0) * 100)
         self.debug_window.evaluate_js(f"window.updateLive?.('{self.mode}', '{label}', {pct})")
 
-    def update_cursor_debug(self, ready: bool, yaw_delta: float, pitch_delta: float) -> None:
+    def update_cursor_debug(self, ready: bool, yaw_delta: float, pitch_delta: float, moving: bool) -> None:
         """Live head-pose deflection from the eye-mode cursor's centered
         baseline - see main.py's cursor_debug. Makes drift ("cursor won't
         stop moving up") diagnosable: if it's sitting well outside the
         dead zone even when you believe you're holding still, the
         baseline itself is probably off, not the dead zone or gesture
-        recognition."""
+        recognition. `moving` is main.py's own authoritative dead-zone
+        check (also what gates left_click/right_click - see
+        cursor_is_moving there), not re-derived here, so the overlay
+        can't disagree with what's actually happening."""
         if self.debug_window is None:
             return
         self.debug_window.evaluate_js(
-            f"window.updateCursorDebug?.({str(bool(ready)).lower()}, {yaw_delta}, {pitch_delta})"
+            f"window.updateCursorDebug?.({str(bool(ready)).lower()}, {yaw_delta}, {pitch_delta}, {str(bool(moving)).lower()})"
         )
 
     def _set_mode(self, mode: str) -> None:

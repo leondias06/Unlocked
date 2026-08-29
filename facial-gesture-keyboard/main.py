@@ -166,26 +166,53 @@ CURSOR_DEAD_ZONE = 0.035     # normalized head-pose units - ignores small jitter
 CURSOR_SENSITIVITY = 900.0   # px/sec per unit of head tilt beyond the dead zone
 CURSOR_MAX_SPEED = 900.0     # px/sec cap, so a big head snap can't fling the cursor off-screen
 
+# The baseline is nudged a little further toward the current reading
+# *every* frame, not just at rest - that one-time average only ever
+# fixed acute single-frame noise (a blink, a bad landmark estimate); it
+# can't do anything about a real, slow change in resting head/torso
+# position over the following minutes (settling into a chair, posture
+# drifting, getting tired). Gating recentering on "only while at rest"
+# was tried first and doesn't work: drift large enough to sit outside
+# the dead zone is by definition indistinguishable from "actively
+# moving" from that check's point of view, so it would never be
+# recognized as something to correct - the exact stuck-forever failure
+# mode this exists to fix. Using two rates instead: fast while at rest
+# (no risk of interfering with anything), much slower while deflected
+# (~10x, so a brief deliberate flick to move the cursor barely decays,
+# but a pose held for many seconds - which is either sustained drift or
+# a long intentional move either way ends up wanting the same
+# treatment - eventually gets absorbed as the new center).
+CURSOR_RECENTER_ALPHA_AT_REST = 0.02
+CURSOR_RECENTER_ALPHA_WHILE_MOVING = 0.003
+
 # Live deflection-from-baseline, refreshed every frame in eye mode -
 # purely for the debug overlay (see windows.update_cursor_debug), so
 # drift like "cursor won't stop moving up" is something you can actually
 # see the cause of (a small-but-nonzero pitch delta sitting just outside
 # the dead zone) instead of just observing the symptom.
-cursor_debug: dict = {"ready": False, "yaw_delta": 0.0, "pitch_delta": 0.0}
+cursor_debug: dict = {"ready": False, "yaw_delta": 0.0, "pitch_delta": 0.0, "moving": False}
+
+# Whether the cursor is currently deflected past the dead zone (i.e.
+# actually moving right now) - main.py's live-classification step reads
+# this to suppress left_click/right_click while true (see the ws_endpoint
+# frame handler below), since the same head tilt that steers the cursor
+# can otherwise get misread as a click gesture mid-movement.
+cursor_is_moving: bool = False
 
 
 def reset_cursor_baseline() -> None:
-    global cursor_baseline
+    global cursor_baseline, cursor_is_moving
     cursor_baseline = None
     _cursor_baseline_samples.clear()
     cursor_debug["ready"] = False
+    cursor_is_moving = False
 
 
 def update_cursor_from_head_pose(landmarks: list[dict], dt: float) -> None:
     """Moves the real OS cursor based on continuous head yaw/pitch,
     relative to the pose averaged when eye mode was entered - tilt away
     from center to move, back to center to stop, like a joystick."""
-    global cursor_baseline
+    global cursor_baseline, cursor_is_moving
     yaw, pitch = gestures.head_pose(landmarks)
 
     if cursor_baseline is None:
@@ -209,8 +236,19 @@ def update_cursor_from_head_pose(landmarks: list[dict], dt: float) -> None:
     cursor_debug["yaw_delta"] = round(yaw_delta, 3)
     cursor_debug["pitch_delta"] = round(pitch_delta, 3)
 
-    dx_speed = max(-CURSOR_MAX_SPEED, min(CURSOR_MAX_SPEED, deflection(yaw_delta) * CURSOR_SENSITIVITY))
-    dy_speed = max(-CURSOR_MAX_SPEED, min(CURSOR_MAX_SPEED, deflection(pitch_delta) * CURSOR_SENSITIVITY))
+    yaw_speed = deflection(yaw_delta)
+    pitch_speed = deflection(pitch_delta)
+    cursor_is_moving = yaw_speed != 0.0 or pitch_speed != 0.0
+    cursor_debug["moving"] = cursor_is_moving
+
+    alpha = CURSOR_RECENTER_ALPHA_WHILE_MOVING if cursor_is_moving else CURSOR_RECENTER_ALPHA_AT_REST
+    cursor_baseline = (
+        cursor_baseline[0] + (yaw - cursor_baseline[0]) * alpha,
+        cursor_baseline[1] + (pitch - cursor_baseline[1]) * alpha,
+    )
+
+    dx_speed = max(-CURSOR_MAX_SPEED, min(CURSOR_MAX_SPEED, yaw_speed * CURSOR_SENSITIVITY))
+    dy_speed = max(-CURSOR_MAX_SPEED, min(CURSOR_MAX_SPEED, pitch_speed * CURSOR_SENSITIVITY))
     dx, dy = dx_speed * dt, dy_speed * dt
     if dx or dy:
         mouse_controller.move(int(dx), int(dy))
@@ -442,7 +480,16 @@ async def ws_endpoint(websocket: WebSocket):
                     # Live mode: classify (restricted to the current
                     # mode's labels, if any), then debounce into a
                     # discrete event.
-                    allowed = MODE_ALLOWED_LABELS.get(active_mode)
+                    if active_mode == "eye" and cursor_is_moving:
+                        # The same head tilt that's steering the cursor
+                        # can otherwise get misread as left_click/
+                        # right_click mid-movement - only neutral is a
+                        # candidate while the cursor is actually moving,
+                        # so a click can only ever fire once you've
+                        # settled back to center.
+                        allowed = {gestures.NEUTRAL_LABEL}
+                    else:
+                        allowed = MODE_ALLOWED_LABELS.get(active_mode)
                     pred, confidence = calibration_store.predict(features, allowed_labels=allowed)
                     response["prediction"] = pred
                     response["confidence"] = round(confidence, 2)

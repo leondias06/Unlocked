@@ -81,8 +81,8 @@ class MainApi:
     def update_live_gesture(self, prediction: str | None, confidence: float) -> None:
         self._windows.update_live_gesture(prediction, confidence)
 
-    def update_cursor_debug(self, ready: bool, yaw_delta: float, pitch_delta: float) -> None:
-        self._windows.update_cursor_debug(ready, yaw_delta, pitch_delta)
+    def update_cursor_debug(self, ready: bool, yaw_delta: float, pitch_delta: float, moving: bool) -> None:
+        self._windows.update_cursor_debug(ready, yaw_delta, pitch_delta, moving)
 
 
 class ToggleApi:

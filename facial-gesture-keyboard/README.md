@@ -203,18 +203,38 @@ away from center moves the cursor continuously in that direction at a
 speed proportional to how far off you are, and returning to center
 stops it. This reuses the same landmark pipeline already built for
 gestures (see `gestures.head_pose`) but runs independently of the
-calibrated classifier - it needs no calibration step. Tunable in
-`main.py`: `CURSOR_BASELINE_SAMPLES` (how many frames get averaged into
-"center"), `CURSOR_DEAD_ZONE` (how much tilt beyond that is ignored as
-jitter), `CURSOR_SENSITIVITY` (px/sec per unit of tilt), and
-`CURSOR_MAX_SPEED` (hard cap so a big head snap can't fling the cursor
-off-screen). These are reasonable starting values, not exhaustively
-tuned against a real face - if the cursor drifts in one direction
-without stopping, the debug overlay's `cursor` line shows the live
-yaw/pitch deflection from center, which is the first thing to check
-(if it's sitting well outside the dead zone while you believe you're
-holding still, the averaged baseline is still off, not the dead zone
-itself - try re-entering eye mode to recapture it).
+calibrated classifier - it needs no calibration step.
+
+Beyond the initial averaged baseline, the "center" pose keeps adapting
+continuously: every frame, it's nudged a little toward wherever your
+head currently is, fast while the cursor reads as at-rest
+(`CURSOR_RECENTER_ALPHA_AT_REST`) and much slower while it reads as
+moving (`CURSOR_RECENTER_ALPHA_WHILE_MOVING`, ~10x slower). This matters
+because a real resting position can genuinely shift over a session
+(settling into a chair, posture drifting) in a way no *fixed* baseline,
+however well it was captured, can track - and a first attempt at fixing
+that by only recentering while at-rest turned out not to work at all:
+drift large enough to sit outside the dead zone is, by definition,
+indistinguishable from "actively moving" to that check, so it would
+never be recognized as something to correct - the exact "cursor won't
+stop drifting" failure mode this exists to fix. Using two rates instead
+means a brief deliberate flick barely decays, but a pose held for many
+seconds - sustained drift or a long intentional move, either way ends
+up wanting the same treatment - eventually gets absorbed as the new
+center. While the cursor reads as moving, `left_click`/`right_click`
+are also suppressed (forced to `neutral`) - the same head tilt that
+steers the cursor can otherwise get misread as a click mid-movement, so
+a click can only fire once you've actually settled back to center.
+
+Tunable in `main.py`: `CURSOR_BASELINE_SAMPLES` (frames averaged into
+the initial "center"), `CURSOR_DEAD_ZONE` (how much tilt is treated as
+at-rest jitter rather than a deliberate move), `CURSOR_SENSITIVITY`
+(px/sec per unit of tilt), `CURSOR_MAX_SPEED` (hard cap so a big head
+snap can't fling the cursor off-screen), and the two recenter alphas
+above. These are reasonable starting values, not exhaustively tuned
+against a real face - the debug overlay's `cursor` line shows the live
+yaw/pitch deflection from center and whether it currently reads as
+moving, which is the first thing to check if something feels off.
 
 ## 5. On-screen keyboard
 

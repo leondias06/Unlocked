@@ -76,23 +76,22 @@
   window.flashFired = flashFired;
 
   const cursorVal = document.getElementById("cursorVal");
-  // CURSOR_DEAD_ZONE in main.py - kept in sync manually since this is a
-  // display-only echo, not a second source of truth for the real value.
-  const CURSOR_DEAD_ZONE = 0.035;
 
   // Called every frame while in eye mode (see main.py's cursor_debug) -
-  // yaw/pitch delta from the centered baseline. If this sits well
-  // outside the dead zone even while you believe you're holding still,
-  // the baseline itself is off (see CURSOR_BASELINE_SAMPLES in main.py),
-  // not the dead zone or gesture recognition - that's exactly what this
-  // readout is for catching.
-  function updateCursorDebug(ready, yawDelta, pitchDelta) {
+  // yaw/pitch delta from the centered baseline, and whether it's outside
+  // the dead zone right now. `moving` is main.py's own authoritative
+  // check (also what gates left_click/right_click - see cursor_is_moving
+  // in main.py), not re-derived here, so this can't disagree with what's
+  // actually happening. If yaw/pitch sit well outside the dead zone even
+  // while you believe you're holding still, the baseline itself is off
+  // (see CURSOR_BASELINE_SAMPLES / CURSOR_RECENTER_ALPHA in main.py),
+  // not the dead zone or gesture recognition - that's what this is for.
+  function updateCursorDebug(ready, yawDelta, pitchDelta, moving) {
     if (!ready) {
       cursorVal.textContent = "centering...";
       return;
     }
-    const outside = Math.abs(yawDelta) >= CURSOR_DEAD_ZONE || Math.abs(pitchDelta) >= CURSOR_DEAD_ZONE;
-    cursorVal.textContent = "yaw " + yawDelta.toFixed(3) + "  pitch " + pitchDelta.toFixed(3) + (outside ? "  (moving)" : "  (still)");
+    cursorVal.textContent = "yaw " + yawDelta.toFixed(3) + "  pitch " + pitchDelta.toFixed(3) + (moving ? "  (moving)" : "  (still)");
   }
   window.updateCursorDebug = updateCursorDebug;
 </script>

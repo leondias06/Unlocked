@@ -188,7 +188,7 @@ function handleTracking(msg) {
 
     if (msg.cursor_debug && window.pywebview?.api?.update_cursor_debug) {
       window.pywebview.api.update_cursor_debug(
-        msg.cursor_debug.ready, msg.cursor_debug.yaw_delta, msg.cursor_debug.pitch_delta
+        msg.cursor_debug.ready, msg.cursor_debug.yaw_delta, msg.cursor_debug.pitch_delta, msg.cursor_debug.moving
       );
     }
 
