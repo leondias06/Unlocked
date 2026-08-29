@@ -228,3 +228,194 @@ html, body {
   color: var(--fog-dim);
   margin: 0;
 }
+
+/* ---------- live event log ---------- */
+
+.event-log {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.event-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--ink-raised-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--signal);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  animation: event-in 0.2s ease-out;
+}
+
+.event-row__label {
+  color: #F0F3F6;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.event-row__meta {
+  color: var(--fog-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes event-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- calibration section ---------- */
+
+.calibration {
+  max-width: 1180px;
+  margin: 0 auto 40px;
+  padding: 0 28px;
+}
+
+.calibration__header h2 {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: #F0F3F6;
+  margin: 0 0 6px;
+}
+
+.calibration__header .help {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fog-dim);
+  max-width: 68ch;
+  margin: 0 0 20px;
+}
+
+.cal-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cal-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 90px auto auto;
+  align-items: center;
+  gap: 14px;
+  background: var(--ink-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px 14px;
+  transition: border-color 0.2s;
+}
+
+.cal-row.is-recording {
+  border-color: var(--alert);
+}
+
+.cal-row.is-ready {
+  border-color: var(--signal);
+}
+
+@media (max-width: 720px) {
+  .cal-row {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "name count"
+      "bar bar"
+      "record clear";
+  }
+  .cal-row__name { grid-area: name; }
+  .cal-row__count { grid-area: count; text-align: right; }
+  .cal-row__bar { grid-area: bar; }
+  .cal-row__record { grid-area: record; }
+  .cal-row__clear { grid-area: clear; }
+}
+
+.cal-row__name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #F0F3F6;
+}
+
+.cal-row__bar {
+  height: 6px;
+  background: var(--ink);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+.cal-row__fill {
+  height: 100%;
+  width: 0%;
+  background: var(--signal);
+  transition: width 0.15s ease-out;
+}
+
+.cal-row.is-recording .cal-row__fill {
+  background: var(--alert);
+}
+
+.cal-row__count {
+  font-size: 12px;
+  color: var(--fog-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border-radius: 5px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  background: var(--ink-raised-2);
+  color: var(--fog);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.btn:hover { border-color: var(--signal); color: #F0F3F6; }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn--primary {
+  background: rgba(76, 201, 240, 0.1);
+  border-color: var(--signal);
+  color: var(--signal);
+}
+.btn--primary:hover { background: rgba(76, 201, 240, 0.18); }
+
+.btn--ghost { background: transparent; }
+
+.cal-row__record.is-active {
+  background: rgba(245, 166, 35, 0.15);
+  border-color: var(--alert);
+  color: var(--alert);
+}
+
+.cal-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.cal-status {
+  font-size: 12px;
+  color: var(--fog-dim);
+}
+
+.cal-status.is-ok { color: var(--signal); }
+.cal-status.is-error { color: var(--alert); }

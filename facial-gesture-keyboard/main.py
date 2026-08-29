@@ -1,13 +1,14 @@
 """
 Facial Gesture Keyboard - CV pipeline server.
 
-Step 1 of the build: camera integration + facial landmark detection.
-Receives JPEG video frames from the browser over a WebSocket, runs
-MediaPipe Face Mesh on each frame, and streams the detected landmarks
-back to the browser for live visualization.
+Handles two things now:
+  1. Camera tracking: MediaPipe Face Mesh landmark detection (step 1).
+  2. Gesture calibration + classification: turning landmark movement
+     into discrete up/down/left/right/confirm/backspace events (step 2).
 
-No gesture classification yet - that's the next step, once this
-tracking loop is confirmed to work reliably on your webcam.
+See gestures.py for the feature extraction, calibration storage, and
+debouncing logic - kept separate so it can be unit-tested without a
+camera or the MediaPipe model.
 """
 
 import base64
@@ -21,6 +22,8 @@ import mediapipe as mp
 from mediapipe.tasks.python import BaseOptions, vision
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+
+import gestures
 
 # --- MediaPipe Face Landmarker setup -----------------------------------
 #
@@ -61,6 +64,10 @@ landmarker = vision.FaceLandmarker.create_from_options(_options)
 
 app = FastAPI()
 
+# Single shared calibration store - this is a single-user prototype, so
+# calibration data is intentionally global rather than per-connection.
+calibration_store = gestures.CalibrationStore()
+
 # Landmark index groups we'll care about once we build gesture
 # classification. Kept here now so the frontend can already highlight
 # these regions distinctly during tracking. Indices are MediaPipe's
@@ -100,33 +107,104 @@ def extract_landmarks(frame: np.ndarray) -> list[dict] | None:
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
     await websocket.accept()
+
+    # Tell the client what gestures/thresholds exist so the calibration
+    # UI can be built from this single source of truth instead of
+    # duplicating label names and constants in JS.
+    await websocket.send_text(json.dumps({
+        "type": "config",
+        "all_labels": gestures.ALL_LABELS,
+        "neutral_label": gestures.NEUTRAL_LABEL,
+        "gesture_labels": gestures.GESTURE_LABELS,
+        "min_samples_per_label": gestures.MIN_SAMPLES_PER_LABEL,
+    }))
+
+    # Per-connection state: which label (if any) is currently being
+    # recorded during calibration, and the debouncer that turns live
+    # predictions into discrete fired gesture events.
+    capture_label: str | None = None
+    debouncer = gestures.GestureDebouncer()
+
     try:
         while True:
             raw = await websocket.receive_text()
             try:
-                payload = json.loads(raw)
+                msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
 
-            frame = decode_data_url(payload.get("frame", ""))
-            if frame is None:
-                await websocket.send_text(json.dumps({"status": "bad_frame"}))
+            msg_type = msg.get("type")
+
+            # --- calibration control messages -----------------------
+
+            if msg_type == "set_label":
+                capture_label = msg.get("label")  # a gesture name, or None to stop capturing
+                count = len(calibration_store.samples.get(capture_label, [])) if capture_label else 0
+                await websocket.send_text(json.dumps({
+                    "type": "label_set", "label": capture_label, "count": count,
+                }))
                 continue
 
-            landmarks = extract_landmarks(frame)
-            if landmarks is None:
-                await websocket.send_text(json.dumps({"status": "no_face"}))
-            else:
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "status": "ok",
-                            "landmark_count": len(landmarks),
-                            "landmarks": landmarks,
-                            "key_regions": KEY_REGIONS,
-                        }
-                    )
-                )
+            if msg_type == "reset_label_samples":
+                calibration_store.clear_label(msg.get("label", ""))
+                await websocket.send_text(json.dumps({
+                    "type": "label_set", "label": msg.get("label"), "count": 0,
+                }))
+                continue
+
+            if msg_type == "reset_all":
+                calibration_store.clear_all()
+                await websocket.send_text(json.dumps({"type": "reset_ok"}))
+                continue
+
+            if msg_type == "train":
+                result = calibration_store.train()
+                await websocket.send_text(json.dumps({"type": "train_result", **result}))
+                continue
+
+            # --- video frame: tracking + (capture or live classify) --
+
+            if msg_type == "frame":
+                frame = decode_data_url(msg.get("frame", ""))
+                if frame is None:
+                    await websocket.send_text(json.dumps({"type": "tracking", "status": "bad_frame"}))
+                    continue
+
+                landmarks = extract_landmarks(frame)
+                if landmarks is None:
+                    await websocket.send_text(json.dumps({"type": "tracking", "status": "no_face"}))
+                    continue
+
+                response = {
+                    "type": "tracking",
+                    "status": "ok",
+                    "landmark_count": len(landmarks),
+                    "landmarks": landmarks,
+                    "key_regions": KEY_REGIONS,
+                }
+
+                features = gestures.landmarks_to_features(landmarks)
+
+                if capture_label:
+                    # Calibration mode: just record the sample, no classification.
+                    count = calibration_store.add_sample(capture_label, features)
+                    response["capture_label"] = capture_label
+                    response["capture_count"] = count
+                elif calibration_store.ready:
+                    # Live mode: classify, then debounce into a discrete event.
+                    pred, confidence = calibration_store.predict(features)
+                    response["prediction"] = pred
+                    response["confidence"] = round(confidence, 2)
+
+                    fired = debouncer.update(pred, confidence)
+                    if fired:
+                        await websocket.send_text(json.dumps({
+                            "type": "gesture", "label": fired, "confidence": round(confidence, 2),
+                        }))
+
+                await websocket.send_text(json.dumps(response))
+                continue
+
     except WebSocketDisconnect:
         pass
 

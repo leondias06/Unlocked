@@ -5,8 +5,12 @@
 //   2. Stream downscaled JPEG frames to the backend over a WebSocket.
 //   3. Draw the returned landmarks on top of the video as visual proof
 //      the tracking pipeline is working.
+//   4. Drive the calibration UI: record samples per gesture, train the
+//      classifier, and show fired gesture events live.
 //
-// No gesture logic lives here yet - this is purely the tracking step.
+// Gesture label names, ordering, and the minimum-samples threshold all
+// come from the server's "config" message (single source of truth in
+// gestures.py) rather than being duplicated here.
 
 const REGION_COLORS = {
   left_eye: "#4CC9F0",
@@ -34,6 +38,15 @@ const mFace = document.getElementById("mFace");
 const mPoints = document.getElementById("mPoints");
 const mFps = document.getElementById("mFps");
 const mLatency = document.getElementById("mLatency");
+const mPrediction = document.getElementById("mPrediction");
+
+const eventLog = document.getElementById("eventLog");
+const eventLogEmpty = document.getElementById("eventLogEmpty");
+
+const calRows = document.getElementById("calRows");
+const trainBtn = document.getElementById("trainBtn");
+const resetAllBtn = document.getElementById("resetAllBtn");
+const trainStatus = document.getElementById("trainStatus");
 
 const sendCanvas = document.createElement("canvas");
 sendCanvas.width = SEND_WIDTH;
@@ -48,6 +61,12 @@ let sendTimestamps = [];    // queue for round-trip latency measurement
 let msgCount = 0;
 let fpsWindowStart = performance.now();
 let scanPhase = 0;
+
+// calibration/gesture state
+let allLabels = [];          // e.g. ["neutral","up","down","left","right","confirm","backspace"]
+let minSamplesPerLabel = 15; // overwritten by server config
+let activeCaptureLabel = null;
+let rowEls = {};             // label -> { root, fill, count, recordBtn }
 
 // ---------------------------------------------------------------- camera
 
@@ -97,11 +116,44 @@ function sendFrame() {
   sendCtx.drawImage(video, 0, 0, SEND_WIDTH, SEND_HEIGHT);
   const dataUrl = sendCanvas.toDataURL("image/jpeg", 0.6);
   sendTimestamps.push(performance.now());
-  ws.send(JSON.stringify({ frame: dataUrl }));
+  ws.send(JSON.stringify({ type: "frame", frame: dataUrl }));
+}
+
+function send(obj) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify(obj));
 }
 
 function handleMessage(msg) {
-  // latency: pair this response with the oldest outstanding send timestamp
+  switch (msg.type) {
+    case "config":
+      handleConfig(msg);
+      break;
+    case "tracking":
+      handleTracking(msg);
+      break;
+    case "label_set":
+      handleLabelSet(msg);
+      break;
+    case "train_result":
+      handleTrainResult(msg);
+      break;
+    case "gesture":
+      handleGestureEvent(msg);
+      break;
+    case "reset_ok":
+      handleResetOk();
+      break;
+    default:
+      // unknown message type - ignore rather than throw, servers may
+      // add fields/messages over time
+      break;
+  }
+}
+
+function handleTracking(msg) {
+  // latency + fps bookkeeping: exactly one "tracking" message per frame
+  // sent, so this stays correctly paired with sendTimestamps.
   const sentAt = sendTimestamps.shift();
   if (sentAt !== undefined) {
     const rtt = Math.round(performance.now() - sentAt);
@@ -109,7 +161,6 @@ function handleMessage(msg) {
     mLatency.classList.toggle("is-alert", rtt > 250);
   }
 
-  // server fps (message rate)
   msgCount++;
   const now = performance.now();
   if (now - fpsWindowStart > 1000) {
@@ -124,6 +175,17 @@ function handleMessage(msg) {
     mFace.textContent = "yes";
     mFace.classList.remove("is-idle", "is-alert");
     mPoints.textContent = msg.landmark_count;
+
+    if (msg.capture_label) {
+      // currently recording calibration samples for this label
+      updateRowProgress(msg.capture_label, msg.capture_count);
+    } else if (msg.prediction !== undefined) {
+      // live classification readout
+      const conf = msg.confidence !== undefined ? ` (${Math.round(msg.confidence * 100)}%)` : "";
+      mPrediction.textContent = (msg.prediction || "—") + conf;
+    } else {
+      mPrediction.textContent = "not calibrated";
+    }
   } else if (msg.status === "no_face") {
     lastLandmarks = null;
     mFace.textContent = "no";
@@ -136,6 +198,146 @@ function handleMessage(msg) {
     mFace.classList.add("is-idle");
   }
 }
+
+// ---------------------------------------------------------------- calibration UI
+
+function handleConfig(msg) {
+  allLabels = msg.all_labels;
+  minSamplesPerLabel = msg.min_samples_per_label;
+  buildCalibrationRows();
+}
+
+function buildCalibrationRows() {
+  calRows.innerHTML = "";
+  rowEls = {};
+
+  for (const label of allLabels) {
+    const root = document.createElement("div");
+    root.className = "cal-row";
+    root.dataset.label = label;
+
+    const name = document.createElement("span");
+    name.className = "cal-row__name";
+    name.textContent = label;
+
+    const bar = document.createElement("div");
+    bar.className = "cal-row__bar";
+    const fill = document.createElement("div");
+    fill.className = "cal-row__fill";
+    bar.appendChild(fill);
+
+    const count = document.createElement("span");
+    count.className = "cal-row__count";
+    count.textContent = `0 / ${minSamplesPerLabel}`;
+
+    const recordBtn = document.createElement("button");
+    recordBtn.className = "btn cal-row__record";
+    recordBtn.textContent = "Record";
+    recordBtn.addEventListener("click", () => toggleRecording(label));
+
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "btn btn--ghost cal-row__clear";
+    clearBtn.textContent = "Clear";
+    clearBtn.addEventListener("click", () => {
+      send({ type: "reset_label_samples", label });
+    });
+
+    root.append(name, bar, count, recordBtn, clearBtn);
+    calRows.appendChild(root);
+    rowEls[label] = { root, fill, count, recordBtn };
+  }
+}
+
+function toggleRecording(label) {
+  if (activeCaptureLabel === label) {
+    // stop recording this label
+    send({ type: "set_label", label: null });
+  } else {
+    // switching to (or starting) recording this label
+    send({ type: "set_label", label });
+  }
+}
+
+function handleLabelSet(msg) {
+  // reflect which row (if any) is now actively recording
+  if (activeCaptureLabel && rowEls[activeCaptureLabel]) {
+    rowEls[activeCaptureLabel].root.classList.remove("is-recording");
+    rowEls[activeCaptureLabel].recordBtn.classList.remove("is-active");
+    rowEls[activeCaptureLabel].recordBtn.textContent = "Record";
+  }
+
+  activeCaptureLabel = msg.label;
+
+  if (activeCaptureLabel && rowEls[activeCaptureLabel]) {
+    rowEls[activeCaptureLabel].root.classList.add("is-recording");
+    rowEls[activeCaptureLabel].recordBtn.classList.add("is-active");
+    rowEls[activeCaptureLabel].recordBtn.textContent = "Recording… (click to stop)";
+  }
+
+  updateRowProgress(msg.label, msg.count || 0);
+}
+
+function updateRowProgress(label, count) {
+  const row = rowEls[label];
+  if (!row) return;
+  const pct = Math.min(100, (count / minSamplesPerLabel) * 100);
+  row.fill.style.width = `${pct}%`;
+  row.count.textContent = `${count} / ${minSamplesPerLabel}`;
+  row.root.classList.toggle("is-ready", count >= minSamplesPerLabel);
+}
+
+function handleTrainResult(msg) {
+  trainStatus.textContent = msg.message;
+  trainStatus.classList.toggle("is-ok", msg.status === "ok");
+  trainStatus.classList.toggle("is-error", msg.status === "error");
+
+  if (msg.counts) {
+    for (const [label, count] of Object.entries(msg.counts)) {
+      updateRowProgress(label, count);
+    }
+  }
+}
+
+function handleGestureEvent(msg) {
+  eventLogEmpty?.remove();
+
+  const row = document.createElement("div");
+  row.className = "event-row";
+
+  const label = document.createElement("span");
+  label.className = "event-row__label";
+  label.textContent = msg.label;
+
+  const meta = document.createElement("span");
+  meta.className = "event-row__meta";
+  const time = new Date().toLocaleTimeString([], { hour12: false });
+  meta.textContent = `${Math.round(msg.confidence * 100)}% · ${time}`;
+
+  row.append(label, meta);
+  eventLog.prepend(row);
+
+  // keep the log short
+  while (eventLog.children.length > 8) {
+    eventLog.removeChild(eventLog.lastChild);
+  }
+}
+
+function handleResetOk() {
+  activeCaptureLabel = null;
+  trainStatus.textContent = "";
+  trainStatus.classList.remove("is-ok", "is-error");
+  mPrediction.textContent = "—";
+  eventLog.innerHTML = "";
+  const empty = document.createElement("p");
+  empty.className = "note";
+  empty.id = "eventLogEmpty";
+  empty.textContent = "Calibrate and train below to start seeing live gesture events here.";
+  eventLog.appendChild(empty);
+  buildCalibrationRows();
+}
+
+trainBtn.addEventListener("click", () => send({ type: "train" }));
+resetAllBtn.addEventListener("click", () => send({ type: "reset_all" }));
 
 // ---------------------------------------------------------------- render
 
