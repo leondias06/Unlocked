@@ -4,3 +4,8 @@ __pycache__/
 face_landmarker.task
 calibration_data.json
 .DS_Store
+
+# PyInstaller build output (see build.spec) - regenerate with
+# `pyinstaller build.spec`, don't commit the ~200MB result
+build/
+dist/

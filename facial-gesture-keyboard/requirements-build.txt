@@ -1,0 +1,5 @@
+# Only needed to build the standalone .exe (see build.spec) - not
+# required to run the app from source, and not needed by end users of
+# the built .exe itself.
+-r requirements.txt
+pyinstaller>=6.22

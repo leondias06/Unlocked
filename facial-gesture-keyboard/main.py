@@ -89,6 +89,19 @@ def _next_timestamp_ms() -> int:
 
 app = FastAPI()
 
+
+@app.middleware("http")
+async def no_cache(request, call_next):
+    # static/ (index.html, style.css, app.js) changes constantly during
+    # development but doesn't trigger uvicorn's --reload (that only
+    # watches .py files) - so a browser can easily end up running stale
+    # JS from a previous edit while looking like nothing changed. This
+    # forces every request to revalidate instead of silently caching.
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 # Single shared calibration store - this is a single-user prototype, so
 # calibration data is intentionally global rather than per-connection.
 # Backed by a JSON file (see gestures.CalibrationStore) so recorded

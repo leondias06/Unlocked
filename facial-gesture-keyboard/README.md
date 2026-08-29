@@ -16,6 +16,10 @@ This covers the first two working pieces of the hackathon project:
    keystrokes** (via `pynput`), so it drives whatever window actually
    has focus — not just the browser tab. See "On-screen keyboard"
    below for platform notes.
+4. **Standalone desktop app** — `build.spec` packages the whole thing
+   into a single `.exe`: a real app window (no browser, no address
+   bar), no Python install required to run it, and no network access
+   needed at runtime at all. See "Standalone desktop app" below.
 
 ## How the gesture mapping works
 
@@ -111,12 +115,23 @@ Toggle it with the button in the bottom-right corner, or press **K**.
 Once it's open, up/down/left/right move the cursor over the grid,
 confirm types the highlighted key, and backspace deletes.
 
-It doesn't just update the on-page display — it uses `pynput` on the
-*server* to synthesize real keystrokes at the OS level, so it types
-into whichever window currently has focus (a text editor, another
-browser tab, anything). This only works because the typing happens in
-the Python backend, which has OS-level access; JavaScript in a browser
-tab is sandboxed and cannot do this on its own.
+Typed text also lands in a real, selectable/copyable textbox right in
+the keyboard panel - that part is plain client-side JavaScript, so it
+works identically no matter how this is hosted or run.
+
+Separately, it *also* uses `pynput` on the *server* to synthesize real
+keystrokes at the OS level, so it can type into whichever window
+currently has focus on that machine (a text editor, another browser
+tab, anything) - not just the on-page textbox. This only works because
+the typing happens in the Python backend, which has OS-level access;
+JavaScript in a browser tab is sandboxed and cannot do this on its own.
+**This is inherently local-machine-only** - it types wherever the
+*server's* OS focus is, so it only makes sense when the server and the
+person using it are on the same computer (which is exactly the
+standalone desktop app below). It cannot and never will work for a
+visitor connecting to a server hosted elsewhere - no web technology
+allows a remote server to control a visitor's OS keyboard, for the
+obvious security reason.
 
 Platform notes:
 - **Windows:** works out of the box.
@@ -130,7 +145,41 @@ Arrow keys / Enter / Backspace on your physical keyboard drive the same
 code path as the gesture events, so you can test the whole keyboard
 (including real OS typing) without a trained classifier.
 
-## 5. What to check as a team
+## 5. Standalone desktop app
+
+`python run.py` is great for development, but it's still "open a
+terminal, run a command, open a browser tab." `desktop_app.py` +
+`build.spec` package the whole app into a single `.exe` that opens as
+a real app window (via [pywebview](https://pywebview.flowrite.com/)),
+needs no Python install, and makes **no network calls at all** at
+runtime - the MediaPipe model is bundled into the build instead of
+downloaded on first run.
+
+Build it (from an activated venv):
+```powershell
+pip install -r requirements-build.txt
+pyinstaller build.spec
+```
+This produces `dist/FacialGestureKeyboard.exe` (~200MB - mediapipe,
+opencv and scikit-learn are large; this is normal). Copy that one file
+anywhere and double-click it.
+
+**First launch will show a real camera-permission prompt** (the same
+kind a browser shows) - click **Allow**. This is expected, not a bug.
+
+Calibration data for the packaged app is saved to
+`%APPDATA%\FacialGestureKeyboard\calibration_data.json` rather than
+next to the script, since a `.exe` built with PyInstaller's "onefile"
+mode re-extracts itself to a fresh temp folder on every launch - saving
+next to the script would silently lose all calibration every time you
+closed the app.
+
+If something goes wrong and you need to see errors: edit `build.spec`,
+set `console=True` in the `EXE(...)` call, rebuild, and run it from a
+terminal instead of double-clicking - the console window will show
+tracebacks that a windowed app otherwise swallows.
+
+## 6. What to check as a team
 
 - **Detection reliability:** does tracking stay stable as you move,
   turn your head, or change lighting?
@@ -145,7 +194,7 @@ code path as the gesture events, so you can test the whole keyboard
 - **Multiple machines/webcams:** worth testing on all 3 laptops now,
   since webcam quality and lighting varies.
 
-## 6. If it's too slow (latency > ~200ms)
+## 7. If it's too slow (latency > ~200ms)
 
 The current setup sends JPEG frames over a WebSocket to a Python
 backend. If that round trip is too slow for responsive gesture control,
@@ -154,18 +203,22 @@ JavaScript build directly in the browser instead, avoiding the network
 hop entirely. Flag this early rather than late — it's a meaningful
 rework, not a tweak.
 
-## 7. Project layout
+## 8. Project layout
 
 ```
 facial-gesture-keyboard/
   run.py                 Dev server launcher (use this, not `uvicorn --reload` -
                           see "Run" above for why)
+  desktop_app.py          Standalone-app entry point: runs the server in a
+                          background thread, opens it in a native window
+  build.spec              PyInstaller build config for the standalone .exe
   main.py               FastAPI server: WebSocket endpoint, MediaPipe inference,
                          calibration protocol handling
   gestures.py            Feature extraction, calibration storage, classifier
                           training/prediction, and gesture-event debouncing
                           (unit-testable without a camera or the ML model)
   requirements.txt
+  requirements-build.txt  Adds pyinstaller, only needed to build the .exe
   static/
     index.html            Page structure (tracking view, telemetry, calibration panel)
     style.css              Visual design
@@ -173,9 +226,11 @@ facial-gesture-keyboard/
                             calibration UI wiring
   face_landmarker.task   (auto-downloaded on first run, not checked into git)
   calibration_data.json  (created after your first recorded sample, not checked into git)
+  build/, dist/           PyInstaller output (not checked into git - see
+                          "Standalone desktop app" above)
 ```
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 - **`ModuleNotFoundError`** — make sure the venv is activated before
   running `uvicorn`, and that you're consistently using either the venv
@@ -213,4 +268,20 @@ facial-gesture-keyboard/
   Wayland on Linux generally doesn't support synthetic keystrokes at
   all). Also make sure the window you want to type into has OS focus —
   the keyboard types wherever focus currently is, not into the browser
-  specifically.
+  specifically. The textbox inside the keyboard panel itself always
+  works regardless, since that part doesn't depend on OS-level access.
+- **You changed `static/app.js` or `style.css` and don't see the
+  change** — those don't trigger a server reload (only `.py` edits do),
+  and the browser can cache them. Hard-refresh (Ctrl+Shift+R). The dev
+  server sends `Cache-Control: no-store` specifically so this class of
+  confusion shouldn't recur, but a very old already-open tab may still
+  have stale JS in memory from before that was added.
+- **The standalone `.exe` won't build / fails with a missing-module
+  error** — `pyinstaller build.spec` collects mediapipe, pynput and
+  webview's data files automatically, but if a newer version of one of
+  those packages changes how it loads resources, PyInstaller may miss
+  something new. Rebuild with `console=True` (see "Standalone desktop
+  app" above) to see the actual traceback instead of a silent exit.
+- **The `.exe` opens but the window closes immediately / never shows
+  the page** — same fix: flip `console=True` in `build.spec`, rebuild,
+  and run from a terminal to see what actually failed.

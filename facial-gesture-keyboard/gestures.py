@@ -14,6 +14,8 @@ the mapping needs to be learned per user, not assumed by us.
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -112,7 +114,19 @@ def landmarks_to_features(landmarks: list[dict]) -> list[float]:
 
 # ---------------------------------------------------------------- calibration store
 
-DEFAULT_CALIBRATION_PATH = Path(__file__).parent / "calibration_data.json"
+def _default_calibration_path() -> Path:
+    # When frozen (PyInstaller), __file__ resolves inside the onefile
+    # build's temp extraction dir, which is wiped and recreated on every
+    # launch - saving there would silently lose all calibration data
+    # every time the app closes. Use a stable per-user location instead.
+    if getattr(sys, "frozen", False):
+        base = Path(os.environ.get("APPDATA", Path.home())) / "FacialGestureKeyboard"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / "calibration_data.json"
+    return Path(__file__).parent / "calibration_data.json"
+
+
+DEFAULT_CALIBRATION_PATH = _default_calibration_path()
 
 
 class CalibrationStore:

@@ -519,11 +519,13 @@ function renderCursor() {
 }
 
 function renderOutput() {
-  kbOutput.textContent = typedText;
-  const caret = document.createElement("span");
-  caret.className = "kb-output__caret";
-  kbOutput.appendChild(caret);
-  kbOutput.scrollLeft = kbOutput.scrollWidth;
+  // A real <textarea> - not just a styled preview - so the typed text is
+  // genuinely usable (select, copy, paste elsewhere) without depending on
+  // the server. This is the one part of the keyboard that works the same
+  // on localhost and on a real public deployment: it's plain client-side
+  // JS, with no dependency on OS-level access to the visitor's machine.
+  kbOutput.value = typedText;
+  kbOutput.scrollTop = kbOutput.scrollHeight;
 }
 
 function moveCursor(dir) {
