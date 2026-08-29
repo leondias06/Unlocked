@@ -4,3 +4,4 @@ mediapipe>=1.0.1
 opencv-python-headless>=5.0.0
 numpy>=2.5
 scikit-learn>=1.9
+pynput>=1.7

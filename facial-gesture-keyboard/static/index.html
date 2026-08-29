@@ -109,6 +109,21 @@
   </div>
 </section>
 
+<button class="kb-toggle" id="kbToggle" title="Toggle on-screen keyboard (K)">
+  <span class="kb-toggle__dot"></span>
+  Keyboard
+</button>
+
+<section class="kb-panel" id="kbPanel" hidden>
+  <header class="kb-panel__header">
+    <span class="kb-panel__title">On-Screen Keyboard</span>
+    <button class="kb-panel__close" id="kbClose" title="Hide keyboard">&times;</button>
+  </header>
+  <div class="kb-output" id="kbOutput"><span class="kb-output__caret"></span></div>
+  <div class="kb-grid" id="kbGrid"></div>
+  <p class="kb-hint">up/down/left/right move &middot; confirm clicks the highlighted key &middot; backspace deletes &middot; keys are also clickable directly</p>
+</section>
+
 <script src="app.js"></script>
 </body>
 </html>

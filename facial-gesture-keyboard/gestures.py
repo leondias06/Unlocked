@@ -13,6 +13,9 @@ the mapping needs to be learned per user, not assumed by us.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
 
@@ -22,11 +25,11 @@ GESTURE_LABELS = ["up", "down", "left", "right", "confirm", "backspace"]
 NEUTRAL_LABEL = "neutral"
 ALL_LABELS = [NEUTRAL_LABEL, *GESTURE_LABELS]
 
-MIN_SAMPLES_PER_LABEL = 15   # ~1.5s of frames at 10fps; calibration UI collects more
+MIN_SAMPLES_PER_LABEL = 15   # ~0.75s of frames at 20fps; calibration UI collects more
 K_NEIGHBORS = 5
 CONFIDENCE_THRESHOLD = 0.6   # predictions below this are treated as "unsure" -> neutral
-HOLD_FRAMES_TO_FIRE = 4      # consecutive matching predictions needed before a gesture fires
-NEUTRAL_FRAMES_TO_REARM = 3  # consecutive neutral frames needed before the next gesture can fire
+HOLD_FRAMES_TO_FIRE = 3      # consecutive matching predictions needed before a gesture fires
+NEUTRAL_FRAMES_TO_REARM = 2  # consecutive neutral frames needed before the next gesture can fire
 
 # ---------------------------------------------------------------- landmark indices
 #
@@ -109,34 +112,69 @@ def landmarks_to_features(landmarks: list[dict]) -> list[float]:
 
 # ---------------------------------------------------------------- calibration store
 
+DEFAULT_CALIBRATION_PATH = Path(__file__).parent / "calibration_data.json"
+
+
 class CalibrationStore:
     """
     Holds labeled feature-vector samples collected during calibration,
-    and the classifier trained from them. Deliberately simple/in-memory
-    - this is a single-user prototype, not a multi-tenant service.
+    and the classifier trained from them.
+
+    Persisted to a JSON file next to this module so recorded samples
+    survive a server restart - including `uvicorn --reload` restarting
+    the process whenever a file changes, which otherwise silently wipes
+    an in-memory-only store mid-calibration.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path or DEFAULT_CALIBRATION_PATH
         self.samples: dict[str, list[list[float]]] = {label: [] for label in ALL_LABELS}
         self.classifier: KNeighborsClassifier | None = None
         self.ready: bool = False
+        self._load()
+
+    def _load(self) -> None:
+        if not self.path.exists():
+            return
+        try:
+            data = json.loads(self.path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return  # corrupt or unreadable - start fresh rather than crash startup
+
+        for label in ALL_LABELS:
+            samples = data.get(label)
+            if isinstance(samples, list):
+                self.samples[label] = samples
+
+        counts = self.counts()
+        if all(c >= MIN_SAMPLES_PER_LABEL for c in counts.values()):
+            self.train()  # picks up where a previously-trained session left off
+
+    def _save(self) -> None:
+        try:
+            self.path.write_text(json.dumps(self.samples))
+        except OSError:
+            pass  # persistence is a nice-to-have; don't break calibration over it
 
     def add_sample(self, label: str, features: list[float]) -> int:
         if label not in self.samples:
             return 0
         self.samples[label].append(features)
+        self._save()
         return len(self.samples[label])
 
     def clear_label(self, label: str) -> None:
         if label in self.samples:
             self.samples[label] = []
             self.ready = False
+            self._save()
 
     def clear_all(self) -> None:
         for label in self.samples:
             self.samples[label] = []
         self.classifier = None
         self.ready = False
+        self._save()
 
     def counts(self) -> dict[str, int]:
         return {label: len(s) for label, s in self.samples.items()}

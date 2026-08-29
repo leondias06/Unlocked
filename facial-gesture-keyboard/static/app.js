@@ -24,7 +24,7 @@ const REGION_COLORS = {
 
 const SEND_WIDTH = 480;
 const SEND_HEIGHT = 360;
-const SEND_INTERVAL_MS = 100; // ~10 fps to the server
+const SEND_INTERVAL_MS = 50; // ~20 fps to the server - lower this and gestures take longer to register
 
 const video = document.getElementById("video");
 const overlay = document.getElementById("overlay");
@@ -205,6 +205,19 @@ function handleConfig(msg) {
   allLabels = msg.all_labels;
   minSamplesPerLabel = msg.min_samples_per_label;
   buildCalibrationRows();
+
+  // Restore real progress from the server rather than assuming 0 - the
+  // calibration store outlives any one connection, so a reconnect
+  // (or a dev server --reload) must not make finished work look wiped.
+  if (msg.counts) {
+    for (const [label, count] of Object.entries(msg.counts)) {
+      updateRowProgress(label, count);
+    }
+  }
+  if (msg.ready) {
+    trainStatus.textContent = "Classifier already trained from saved samples.";
+    trainStatus.classList.add("is-ok");
+  }
 }
 
 function buildCalibrationRows() {
@@ -320,6 +333,8 @@ function handleGestureEvent(msg) {
   while (eventLog.children.length > 8) {
     eventLog.removeChild(eventLog.lastChild);
   }
+
+  if (kbOn) applyGestureToKeyboard(msg.label);
 }
 
 function handleResetOk() {
@@ -443,6 +458,151 @@ function drawScanLine(w, h) {
   ctx.fillStyle = gradient;
   ctx.fillRect(0, y - 40, w, 80);
 }
+
+// ---------------------------------------------------------------- on-screen keyboard
+//
+// A directional-scanning grid: up/down/left/right move a 2D cursor over
+// this layout, "confirm" types the highlighted key, "backspace" deletes
+// the last typed character. Physical arrow keys / Enter / Backspace / "K"
+// are also wired below so this can be exercised without a trained model.
+
+// "⏎" is a distinct Enter key, not a regular character - confirmKey()
+// special-cases it to send a real Enter keystroke instead of typing the
+// glyph itself.
+const KEY_LAYOUT = [
+  ["A", "B", "C", "D", "E", "F", "G", "H"],
+  ["I", "J", "K", "L", "M", "N", "O", "P"],
+  ["Q", "R", "S", "T", "U", "V", "W", "X"],
+  ["Y", "Z", ",", ".", "?", "!", "␣", "⏎"],
+];
+
+const kbToggle = document.getElementById("kbToggle");
+const kbPanel = document.getElementById("kbPanel");
+const kbClose = document.getElementById("kbClose");
+const kbOutput = document.getElementById("kbOutput");
+const kbGrid = document.getElementById("kbGrid");
+
+let kbOn = false;
+let kbRow = 0;
+let kbCol = 0;
+let typedText = "";
+let kbKeyEls = [];
+
+function buildKeyboardGrid() {
+  kbGrid.innerHTML = "";
+  kbKeyEls = KEY_LAYOUT.map((rowChars, r) =>
+    rowChars.map((ch, c) => {
+      const el = document.createElement("div");
+      el.className = "kb-key";
+      el.textContent = ch;
+      // Every key is directly clickable, same as any other virtual
+      // keyboard - "confirm" (gesture or physical Enter, for testing)
+      // just does the same thing to whatever the cursor is already on.
+      el.addEventListener("click", () => {
+        kbRow = r;
+        kbCol = c;
+        renderCursor();
+        confirmKey();
+      });
+      kbGrid.appendChild(el);
+      return el;
+    })
+  );
+  renderCursor();
+}
+
+function renderCursor() {
+  for (const row of kbKeyEls) {
+    for (const el of row) el.classList.remove("is-cursor");
+  }
+  kbKeyEls[kbRow][kbCol].classList.add("is-cursor");
+}
+
+function renderOutput() {
+  kbOutput.textContent = typedText;
+  const caret = document.createElement("span");
+  caret.className = "kb-output__caret";
+  kbOutput.appendChild(caret);
+  kbOutput.scrollLeft = kbOutput.scrollWidth;
+}
+
+function moveCursor(dir) {
+  const rows = KEY_LAYOUT.length;
+  const cols = KEY_LAYOUT[0].length;
+  if (dir === "up") kbRow = (kbRow - 1 + rows) % rows;
+  else if (dir === "down") kbRow = (kbRow + 1) % rows;
+  else if (dir === "left") kbCol = (kbCol - 1 + cols) % cols;
+  else if (dir === "right") kbCol = (kbCol + 1) % cols;
+  renderCursor();
+}
+
+function confirmKey() {
+  const ch = KEY_LAYOUT[kbRow][kbCol];
+
+  if (ch === "⏎") {
+    typedText += "\n";
+    renderOutput();
+    send({ type: "kb_enter" }); // real Enter keystroke, not a typed character
+  } else {
+    const typedChar = ch === "␣" ? " " : ch;
+    typedText += typedChar;
+    renderOutput();
+    send({ type: "kb_type", char: typedChar }); // actually types into whatever has OS focus
+  }
+
+  const el = kbKeyEls[kbRow][kbCol];
+  el.classList.add("is-confirmed");
+  setTimeout(() => el.classList.remove("is-confirmed"), 150);
+}
+
+function backspaceKey() {
+  typedText = typedText.slice(0, -1);
+  renderOutput();
+  send({ type: "kb_backspace" });
+}
+
+function applyGestureToKeyboard(label) {
+  if (label === "up" || label === "down" || label === "left" || label === "right") {
+    moveCursor(label);
+  } else if (label === "confirm") {
+    confirmKey();
+  } else if (label === "backspace") {
+    backspaceKey();
+  }
+}
+
+function setKeyboardOn(on) {
+  kbOn = on;
+  kbPanel.hidden = !on;
+  kbToggle.classList.toggle("is-on", on);
+  if (on) renderCursor();
+}
+
+kbToggle.addEventListener("click", () => setKeyboardOn(!kbOn));
+kbClose.addEventListener("click", () => setKeyboardOn(false));
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "k" || e.key === "K") {
+    setKeyboardOn(!kbOn);
+    return;
+  }
+  if (!kbOn) return;
+
+  const dirs = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
+  if (dirs[e.key]) {
+    e.preventDefault();
+    moveCursor(dirs[e.key]);
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    confirmKey();
+  } else if (e.key === "Backspace") {
+    e.preventDefault();
+    backspaceKey();
+  }
+});
+
+buildKeyboardGrid();
+renderOutput();
 
 // ---------------------------------------------------------------- boot
 
