@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CV Pipeline · Facial Gesture Keyboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar__title">
+    <span class="eyebrow">GESTURE KEYBOARD &middot; CV PIPELINE</span>
+    <h1>Live Landmark Tracking</h1>
+  </div>
+  <div class="conn" id="connIndicator">
+    <span class="conn__dot" id="connDot"></span>
+    <span id="connLabel">connecting</span>
+  </div>
+</header>
+
+<main class="layout">
+
+  <section class="stage">
+    <div class="stage__frame" id="stageFrame">
+      <video id="video" playsinline autoplay muted></video>
+      <canvas id="overlay"></canvas>
+      <div class="stage__hint" id="stageHint">requesting camera access&hellip;</div>
+    </div>
+  </section>
+
+  <aside class="telemetry">
+    <h2>Telemetry</h2>
+
+    <div class="metric">
+      <span class="metric__label">face detected</span>
+      <span class="metric__value" id="mFace">&mdash;</span>
+    </div>
+    <div class="metric">
+      <span class="metric__label">landmarks</span>
+      <span class="metric__value" id="mPoints">&mdash;</span>
+    </div>
+    <div class="metric">
+      <span class="metric__label">server fps</span>
+      <span class="metric__value" id="mFps">&mdash;</span>
+    </div>
+    <div class="metric">
+      <span class="metric__label">round trip</span>
+      <span class="metric__value" id="mLatency">&mdash;</span>
+    </div>
+
+    <div class="divider"></div>
+
+    <h2>Regions tracked</h2>
+    <ul class="regions" id="regionList">
+      <li><span class="dot dot--left_eye"></span>left eye</li>
+      <li><span class="dot dot--right_eye"></span>right eye</li>
+      <li><span class="dot dot--mouth"></span>mouth</li>
+      <li><span class="dot dot--eyebrows"></span>eyebrows</li>
+      <li><span class="dot dot--left_cheek"></span>left cheek</li>
+      <li><span class="dot dot--right_cheek"></span>right cheek</li>
+      <li><span class="dot dot--nose_tip"></span>nose tip</li>
+    </ul>
+
+    <div class="divider"></div>
+
+    <p class="note">
+      Step 1 of the build: confirming camera capture &rarr; landmark
+      detection works reliably. Gesture classification (mapping movement
+      to up / down / left / right / confirm / backspace) is the next step.
+    </p>
+  </aside>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
