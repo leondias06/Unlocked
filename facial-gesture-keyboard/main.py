@@ -27,6 +27,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pynput.keyboard import Controller as KeyboardController
 from pynput.keyboard import Key
+from pynput.mouse import Controller as MouseController
 
 import gestures
 
@@ -127,8 +128,14 @@ MODE_ALLOWED_LABELS = {
 
 
 def set_active_mode(mode: str) -> None:
-    global active_mode
+    global active_mode, cursor_baseline
     active_mode = mode
+    if mode == "eye":
+        # Recapture the "centered" head pose the next time a frame comes
+        # in, rather than reusing whatever was current before - avoids a
+        # jump the instant eye mode starts if your head wasn't dead
+        # center at that exact moment.
+        cursor_baseline = None
 
 
 # Types real OS-level keystrokes so the on-screen keyboard can drive
@@ -136,6 +143,38 @@ def set_active_mode(mode: str) -> None:
 # The frontend owns the grid/cursor UI and tells us over the websocket
 # what to type - it's the one source of truth for what's highlighted.
 keyboard_controller = KeyboardController()
+
+# Head-pose cursor steering (eye mode) - a continuous joystick-style
+# control, separate from the discrete left_click/right_click/
+# switch_to_keyboard *gestures* (those are classified events handled in
+# windows.py; this runs every frame regardless of the classifier).
+mouse_controller = MouseController()
+cursor_baseline: tuple[float, float] | None = None  # (yaw, pitch) captured on entering eye mode
+CURSOR_DEAD_ZONE = 0.02      # normalized head-pose units - ignores small jitter/resting asymmetry
+CURSOR_SENSITIVITY = 900.0   # px/sec per unit of head tilt beyond the dead zone
+CURSOR_MAX_SPEED = 900.0     # px/sec cap, so a big head snap can't fling the cursor off-screen
+
+
+def update_cursor_from_head_pose(landmarks: list[dict], dt: float) -> None:
+    """Moves the real OS cursor based on continuous head yaw/pitch,
+    relative to the pose captured when eye mode was entered - tilt away
+    from center to move, back to center to stop, like a joystick."""
+    global cursor_baseline
+    yaw, pitch = gestures.head_pose(landmarks)
+    if cursor_baseline is None:
+        cursor_baseline = (yaw, pitch)
+        return
+
+    def deflection(v: float) -> float:
+        if abs(v) < CURSOR_DEAD_ZONE:
+            return 0.0
+        return v - CURSOR_DEAD_ZONE if v > 0 else v + CURSOR_DEAD_ZONE
+
+    dx_speed = max(-CURSOR_MAX_SPEED, min(CURSOR_MAX_SPEED, deflection(yaw - cursor_baseline[0]) * CURSOR_SENSITIVITY))
+    dy_speed = max(-CURSOR_MAX_SPEED, min(CURSOR_MAX_SPEED, deflection(pitch - cursor_baseline[1]) * CURSOR_SENSITIVITY))
+    dx, dy = dx_speed * dt, dy_speed * dt
+    if dx or dy:
+        mouse_controller.move(int(dx), int(dy))
 
 # Simple named special keys the keyboard can request via "kb_special" -
 # tab/esc/volume are all real, universal virtual keys pynput supports
@@ -237,6 +276,8 @@ async def ws_endpoint(websocket: WebSocket):
         "all_labels": gestures.ALL_LABELS,
         "neutral_label": gestures.NEUTRAL_LABEL,
         "gesture_labels": gestures.GESTURE_LABELS,
+        "keyboard_mode_gestures": gestures.KEYBOARD_MODE_GESTURES,
+        "eye_mode_gestures": gestures.EYE_MODE_GESTURES,
         "min_samples_per_label": gestures.MIN_SAMPLES_PER_LABEL,
         "counts": calibration_store.counts(),
         "ready": calibration_store.ready,
@@ -247,6 +288,7 @@ async def ws_endpoint(websocket: WebSocket):
     # predictions into discrete fired gesture events.
     capture_label: str | None = None
     debouncer = gestures.GestureDebouncer()
+    last_frame_at: float | None = None  # for head-pose cursor speed (px/sec, not px/frame)
 
     try:
         while True:
@@ -329,6 +371,14 @@ async def ws_endpoint(websocket: WebSocket):
                 if landmarks is None:
                     await websocket.send_text(json.dumps({"type": "tracking", "status": "no_face"}))
                     continue
+
+                now = time.monotonic()
+                if active_mode == "eye":
+                    # Real-time speed (px/sec), not px/frame, so cursor
+                    # feel doesn't change with network/camera fps jitter.
+                    dt = (now - last_frame_at) if last_frame_at is not None else 0.0
+                    update_cursor_from_head_pose(landmarks, min(dt, 0.2))
+                last_frame_at = now
 
                 response = {
                     "type": "tracking",

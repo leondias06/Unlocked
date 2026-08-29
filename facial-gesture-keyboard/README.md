@@ -17,11 +17,12 @@ This covers the first two working pieces of the hackathon project:
    row). It types **real OS-level keystrokes** (via `pynput`), so it
    drives whatever window actually has focus - not just the browser
    tab. See "On-screen keyboard" below for platform notes.
-4. **Three modes** (setup / keyboard / eye) - a dashboard you calibrate
-   from, a Confirm button that switches into keyboard mode, an
-   on-screen key that switches to eye/mouse mode, and a dedicated
-   gesture to switch back. See "Modes" below - this is the part most
-   worth reading carefully before changing anything here.
+4. **Three modes** (setup / eye / keyboard) - a dashboard you calibrate
+   from, a Confirm button that switches into eye/cursor mode (the
+   resting state - not the keyboard), a dedicated gesture that brings
+   the keyboard up on demand, and an on-screen key that sends it back
+   down. See "Modes" below - this is the part most worth reading
+   carefully before changing anything here.
 5. **Standalone desktop app** — `build.spec` packages the whole thing
    into a single `.exe`: a real app window (no browser, no address
    bar), no Python install required to run it, and no network access
@@ -132,26 +133,44 @@ likely to be misread, so it's worth being precise about it:
 - **setup** - the dashboard/calibration window is visible; nothing
   else is. The app starts here. Reachable from either other mode via
   the small tab docked to the left screen edge.
+- **eye** - cursor mode. Entered from **setup** by clicking **Confirm**
+  (which minimizes the dashboard to the left-edge tab and drops
+  straight into this mode) - this, not the keyboard, is the resting
+  state after confirming: starting with a keyboard overlay and no way
+  to move a cursor isn't realistic. Moves the real OS cursor
+  continuously via **head-pose steering** (see below), and separately
+  receives the discrete `left_click`/`right_click` gestures (real OS
+  mouse clicks) and `switch_to_keyboard`, which brings the keyboard up.
 - **keyboard** - the on-screen keyboard overlay is visible and
-  receives the 6 keyboard-mode gestures. Entered from **setup** by
-  clicking **Confirm** (which turns the keyboard on *and* minimizes
-  the dashboard to the left-edge tab, in one step). The *only* way out
-  of keyboard mode is the on-screen **`toggle`** key inside the
-  keyboard grid itself (navigate to it, confirm, like any other key) -
-  there is deliberately no gesture for this direction.
-- **eye** - eye/gaze cursor mode (the actual gaze-to-cursor tracking is
-  a separate, later piece of work - this mode already exists and
-  already routes its gestures correctly, it just doesn't move the
-  cursor with your eyes yet). Receives `left_click`/`right_click` (real
-  OS mouse clicks) and `switch_to_keyboard`, which is the *only* way
-  back to keyboard mode - deliberately a gesture, not a button, since
-  there's no keyboard visible to click one on.
+  receives the 6 keyboard-mode gestures. Entered from **eye** via the
+  `switch_to_keyboard` gesture. The *only* way back out to eye mode is
+  the on-screen **`toggle`** key inside the keyboard grid itself
+  (navigate to it, confirm, like any other key) - there is deliberately
+  no gesture for this direction, since a gesture that hides the
+  keyboard while you're actively using it would be too easy to trigger
+  by accident.
 
 Keyboard-mode gestures and eye-mode gestures are never listened to at
 the same time - firing a keyboard-mode gesture while in eye mode (or
 vice versa) is simply ignored. See `windows.DesktopWindows` for the
 actual state machine; `on_gesture()` there is the one place that
 enforces this.
+
+**Head-pose cursor steering:** the cursor doesn't track literal gaze
+(single-webcam gaze estimation is notoriously inaccurate/jittery
+without dedicated IR hardware) - instead it works like a joystick.
+Whatever head yaw/pitch you have when eye mode is entered becomes
+"center"; tilting/turning your head away from that moves the cursor
+continuously in that direction at a speed proportional to how far off
+center you are, and returning to center stops it. This reuses the same
+landmark pipeline already built for gestures (see `gestures.head_pose`)
+but runs independently of the calibrated classifier - it needs no
+calibration step and works immediately on entering eye mode. Tunable in
+`main.py`: `CURSOR_DEAD_ZONE` (how much tilt is ignored as jitter
+around center), `CURSOR_SENSITIVITY` (px/sec per unit of tilt), and
+`CURSOR_MAX_SPEED` (hard cap so a big head snap can't fling the cursor
+off-screen). These are reasonable starting values, not tuned against a
+real face - expect to adjust them once someone's actually tried it.
 
 ## 5. On-screen keyboard
 
@@ -207,7 +226,7 @@ up/down` send real OS media-key presses, `brightness up/down` adjust
 the display via WMI where the hardware supports it (most laptop
 panels; many external monitors don't) and silently no-op otherwise.
 `toggle` switches to eye mode (see "Modes" above) - this is real and
-wired up, not a placeholder. `on | off` still is.
+wired up, not a placeholder.
 
 Separately, it *also* uses `pynput` on the *server* to synthesize real
 keystrokes at the OS level, so it can type into whichever window
@@ -242,27 +261,26 @@ terminal, run a command, open a browser tab." `desktop_app.py` +
 `build.spec` package the whole app into three real native windows (via
 [pywebview](https://pywebview.flowrite.com/)) instead:
 
-The app is a small state machine with three modes - `setup`, `keyboard`
-and `eye` (see "Modes" above) - and the three windows just reflect
+The app is a small state machine with three modes - `setup`, `eye`
+and `keyboard` (see "Modes" above) - and the three windows just reflect
 whichever mode is active:
 
 1. The **launch/calibration window** starts in `setup` mode - camera +
    calibration UI (now behind a dashboard, see "Modes") + a **Confirm**
    button.
-2. Clicking Confirm hides that window and switches to `keyboard` mode:
-   the **keyboard overlay** appears, and a small **tab docked to the
-   left screen edge** appears with it. That tab's only job now is to
-   reopen calibration (back to `setup` mode) - it does not toggle the
-   keyboard.
-3. From `keyboard` mode, the keyboard's own on-screen **toggle key**
-   switches to `eye` mode (keyboard hides). From `eye` mode, the
-   `switch_to_keyboard` gesture switches back to `keyboard` mode (no
-   on-screen button for this direction, by design - see "Modes" above
-   for why the split is deliberate). Gestures are mode-gated: the six
-   keyboard-navigation gestures only act while in `keyboard` mode, and
-   `left_click`/`right_click`/`switch_to_keyboard` only act while in
-   `eye` mode, so a stray gesture from the "wrong" mode is silently
-   ignored rather than doing something unexpected.
+2. Clicking Confirm hides that window and switches straight to `eye`
+   mode: no keyboard overlay, just a small **tab docked to the left
+   screen edge**. That tab's only job is to reopen calibration (back to
+   `setup` mode) - it does not toggle the keyboard.
+3. From `eye` mode, the `switch_to_keyboard` gesture brings up the
+   **keyboard overlay** (`keyboard` mode). From `keyboard` mode, the
+   keyboard's own on-screen **toggle key** sends it back down to `eye`
+   mode (no on-screen button for the other direction, by design - see
+   "Modes" above for why the split is deliberate). Gestures are
+   mode-gated: the six keyboard-navigation gestures only act while in
+   `keyboard` mode, and `left_click`/`right_click`/`switch_to_keyboard`
+   only act while in `eye` mode, so a stray gesture from the "wrong"
+   mode is silently ignored rather than doing something unexpected.
 
 The keyboard overlay is engineered to never steal OS keyboard focus
 when it appears, so gesture-typed keystrokes keep landing in whatever
@@ -322,6 +340,11 @@ tracebacks that a windowed app otherwise swallows.
   on-screen keyboard feels.
 - **Multiple machines/webcams:** worth testing on all 3 laptops now,
   since webcam quality and lighting varies.
+- **Cursor steering feel:** in eye mode, does the head-tilt-to-move
+  cursor feel controllable, or too twitchy/too sluggish? This is
+  governed by `CURSOR_DEAD_ZONE`/`CURSOR_SENSITIVITY`/`CURSOR_MAX_SPEED`
+  in `main.py` (see "Modes" above) - untested against a real face, so
+  expect to need a pass at these numbers.
 
 ## 8. If it's too slow (latency > ~200ms)
 

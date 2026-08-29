@@ -43,7 +43,7 @@ from windows import DesktopWindows
 # silently clamped up to that floor. 120 is as slim as this tab gets;
 # height has no such floor, so it's kept short to look like a small tab.
 TOGGLE_WIDTH = 120
-TOGGLE_HEIGHT = 64
+TOGGLE_HEIGHT = 80
 KEYBOARD_WIDTH = 720
 KEYBOARD_HEIGHT = 480
 

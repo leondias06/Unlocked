@@ -18,20 +18,24 @@ Three modes (DesktopWindows.mode), matching the actual product design:
   - "setup"    - the main/calibration window is visible; nothing else
                  is. Entered at launch, or via the toggle tab from
                  either other mode.
-  - "keyboard" - the keyboard overlay is visible and receives
-                 up/down/left/right/confirm/backspace gestures. Entered
-                 from "setup" via the Confirm button. The *only* way
-                 out is the on-screen "toggle" key inside the keyboard
-                 grid itself (a normal navigate+confirm key press, not
-                 a gesture) - there is deliberately no gesture that
-                 hides the keyboard from within keyboard mode.
   - "eye"      - eye/gaze cursor mode (gaze-to-cursor tracking itself
                  is a later pass; this just wires the mode and its
                  gestures). Receives left_click/right_click (real OS
-                 mouse clicks) and switch_to_keyboard (returns to
-                 keyboard mode - the only gesture eye mode listens for
-                 besides the two clicks). Entered from "keyboard" via
-                 that on-screen toggle key.
+                 mouse clicks) and switch_to_keyboard (brings up the
+                 keyboard - the only gesture eye mode listens for
+                 besides the two clicks). Entered from "setup" via the
+                 Confirm button - this, not the keyboard, is the
+                 resting state after confirming: you land able to
+                 control the cursor, and bring up the keyboard on
+                 demand, rather than the other way around.
+  - "keyboard" - the keyboard overlay is visible and receives
+                 up/down/left/right/confirm/backspace gestures. Entered
+                 from "eye" via the switch_to_keyboard gesture. The
+                 *only* way back out to eye mode is the on-screen
+                 "toggle" key inside the keyboard grid itself (a normal
+                 navigate+confirm key press, not a gesture) - there is
+                 deliberately no gesture that hides the keyboard from
+                 within keyboard mode.
 
 Keyboard-mode gestures and eye-mode gestures are never listened to
 simultaneously - on_gesture() below gates on self.mode so a gesture
@@ -134,12 +138,15 @@ class DesktopWindows:
     # --- called from the main window's js_api (Confirm button + gestures) --
 
     def confirm_calibration(self) -> None:
-        """Confirm button on the launch page: turns the keyboard on and
-        minimizes this window to the left-edge tab, in one step."""
+        """Confirm button on the launch page: minimizes this window to
+        the left-edge tab and drops straight into eye/cursor mode - not
+        the keyboard. Starting in keyboard mode with no way to move a
+        cursor isn't a realistic resting state; landing in cursor
+        control and bringing up the keyboard on demand (via the
+        switch_to_keyboard gesture) is."""
         self.main_window.hide()
         show_without_stealing_focus(self.toggle_window)
-        show_without_stealing_focus(self.keyboard_window)
-        self._set_mode("keyboard")
+        self._set_mode("eye")
 
     def on_gesture(self, label: str) -> None:
         """

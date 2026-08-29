@@ -34,9 +34,9 @@ const GRID_ROWS = 7;
 //   volume_up/down    - real OS media keys
 //   brightness_up/down - best-effort real OS brightness (WMI; not all
 //                displays support it - silently does nothing if not)
-//   suggestion - predictive-text placeholder (wired up in a later pass)
-//   mousetoggle - switches to mouse-cursor mode (not implemented yet)
-//   poweronoff / blank - placeholders, deliberately do nothing
+//   suggestion - real predictive-text suggestions (see COMMON_WORDS below)
+//   mousetoggle - switches to eye/cursor mode
+//   blank      - deliberately does nothing (no setup UI for these yet)
 const CELLS = [
   // row 0: esc + 5 predictive-text suggestion cells
   { row: 0, col: 0, kind: "esc", label: "esc" },
@@ -103,7 +103,7 @@ const CELLS = [
   { row: 5, col: 4, cs: 2, kind: "backspace", label: "backspace" },
   { row: 5, col: 7, kind: "shiftchar", primary: ".", shifted: ":" },
   { row: 5, col: 8, kind: "shiftchar", primary: ",", shifted: "?" },
-  { row: 5, col: 9, cs: 2, kind: "poweronoff", label: "on | off" },
+  { row: 5, col: 9, cs: 2, kind: "blank" },
 
   // row 6: bottom function row - volume/brightness are real; the rest
   // are deliberately blank custom keys (navigable/selectable, do
@@ -122,7 +122,7 @@ const CELLS = [
 ];
 
 const FUNCTION_KINDS = new Set([
-  "esc", "tab", "caps", "enter", "backspace", "mousetoggle", "poweronoff",
+  "esc", "tab", "caps", "enter", "backspace", "mousetoggle",
 ]);
 
 // Predictive text word pool, most-common-first. The first ~150 or so
@@ -459,9 +459,8 @@ function confirmKey() {
     case "suggestion":
       if (currentSuggestions[cell.idx]) selectSuggestion(currentSuggestions[cell.idx]);
       break;
-    case "poweronoff":
     case "blank":
-      break; // deliberately no-op for now
+      break; // deliberately no-op - no setup UI for these yet
   }
 
   cell.el.classList.add("is-confirmed");

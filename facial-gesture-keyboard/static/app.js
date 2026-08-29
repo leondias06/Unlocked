@@ -70,9 +70,13 @@ let scanPhase = 0;
 
 // calibration/gesture state
 let allLabels = [];          // e.g. ["neutral","up","down","left","right","confirm","backspace"]
+let neutralLabel = "neutral";
+let keyboardModeGestures = [];
+let eyeModeGestures = [];
 let minSamplesPerLabel = 15; // overwritten by server config
 let activeCaptureLabel = null;
 let rowEls = {};             // label -> { root, fill, count, recordBtn }
+let latestCounts = {};       // label -> sample count, kept for gating checks outside handleConfig
 
 // ---------------------------------------------------------------- camera
 
@@ -209,12 +213,16 @@ function handleTracking(msg) {
 
 function handleConfig(msg) {
   allLabels = msg.all_labels;
+  neutralLabel = msg.neutral_label;
+  keyboardModeGestures = msg.keyboard_mode_gestures || [];
+  eyeModeGestures = msg.eye_mode_gestures || [];
   minSamplesPerLabel = msg.min_samples_per_label;
   buildCalibrationRows();
 
   // Restore real progress from the server rather than assuming 0 - the
   // calibration store outlives any one connection, so a reconnect
   // (or a dev server --reload) must not make finished work look wiped.
+  latestCounts = msg.counts || {};
   if (msg.counts) {
     for (const [label, count] of Object.entries(msg.counts)) {
       updateRowProgress(label, count);
@@ -225,6 +233,7 @@ function handleConfig(msg) {
     trainStatus.classList.add("is-ok");
   }
   updateDashboardStatus(msg.ready, msg.counts);
+  updateGatingUI(msg.ready);
 }
 
 // ---------------------------------------------------------------- dashboard
@@ -248,40 +257,77 @@ function buildCalibrationRows() {
   calRows.innerHTML = "";
   rowEls = {};
 
-  for (const label of allLabels) {
-    const root = document.createElement("div");
-    root.className = "cal-row";
-    root.dataset.label = label;
+  // Grouped by mode rather than one flat list - which gesture belongs
+  // to which mode isn't obvious from the name alone (e.g. "confirm" vs
+  // "left_click" look like they could both be clicks), and the two
+  // groups are never active at the same time in real use (see "Modes"
+  // in the README), so calibrating them as visibly separate sets
+  // reinforces that instead of presenting 9 gestures as one big
+  // undifferentiated pile.
+  const groups = [
+    { title: "Neutral", hint: "Your resting/relaxed face - recorded as its own label so the classifier has a baseline for \"no gesture\".", labels: [neutralLabel] },
+    { title: "Keyboard mode", hint: "Used while the on-screen keyboard is active: scanning the grid and confirming keys.", labels: keyboardModeGestures },
+    { title: "Eye / mouse mode", hint: "Used once real cursor control is active: clicking and switching back to the keyboard.", labels: eyeModeGestures },
+  ];
 
-    const name = document.createElement("span");
-    name.className = "cal-row__name";
-    name.textContent = label;
+  for (const group of groups) {
+    if (!group.labels.length) continue;
 
-    const bar = document.createElement("div");
-    bar.className = "cal-row__bar";
-    const fill = document.createElement("div");
-    fill.className = "cal-row__fill";
-    bar.appendChild(fill);
+    const header = document.createElement("div");
+    header.className = "cal-group-header";
+    const title = document.createElement("h3");
+    title.textContent = group.title;
+    const hint = document.createElement("p");
+    hint.textContent = group.hint;
+    header.append(title, hint);
+    calRows.appendChild(header);
 
-    const count = document.createElement("span");
-    count.className = "cal-row__count";
-    count.textContent = `0 / ${minSamplesPerLabel}`;
+    for (const label of group.labels) {
+      const root = document.createElement("div");
+      root.className = "cal-row";
+      root.dataset.label = label;
 
-    const recordBtn = document.createElement("button");
-    recordBtn.className = "btn cal-row__record";
-    recordBtn.textContent = "Record";
-    recordBtn.addEventListener("click", () => toggleRecording(label));
+      const name = document.createElement("span");
+      name.className = "cal-row__name";
+      // Display-only: "switch_to_keyboard" etc. read better with spaces,
+      // and - more importantly - underscores aren't a CSS line-break
+      // opportunity, so a long one-word label like that would overflow
+      // its fixed-width column and visually overlap the bar next to it.
+      // The raw label (with underscores) still goes out over the wire.
+      name.textContent = label.replace(/_/g, " ");
 
-    const clearBtn = document.createElement("button");
-    clearBtn.className = "btn btn--ghost cal-row__clear";
-    clearBtn.textContent = "Clear";
-    clearBtn.addEventListener("click", () => {
-      send({ type: "reset_label_samples", label });
-    });
+      const badge = document.createElement("span");
+      badge.className = "cal-row__badge";
+      badge.textContent = "✓";
+      badge.title = "Enough samples recorded";
+      name.appendChild(badge);
 
-    root.append(name, bar, count, recordBtn, clearBtn);
-    calRows.appendChild(root);
-    rowEls[label] = { root, fill, count, recordBtn };
+      const bar = document.createElement("div");
+      bar.className = "cal-row__bar";
+      const fill = document.createElement("div");
+      fill.className = "cal-row__fill";
+      bar.appendChild(fill);
+
+      const count = document.createElement("span");
+      count.className = "cal-row__count";
+      count.textContent = `0 / ${minSamplesPerLabel}`;
+
+      const recordBtn = document.createElement("button");
+      recordBtn.className = "btn cal-row__record";
+      recordBtn.textContent = "Record";
+      recordBtn.addEventListener("click", () => toggleRecording(label));
+
+      const clearBtn = document.createElement("button");
+      clearBtn.className = "btn btn--ghost cal-row__clear";
+      clearBtn.textContent = "Clear";
+      clearBtn.addEventListener("click", () => {
+        send({ type: "reset_label_samples", label });
+      });
+
+      root.append(name, bar, count, recordBtn, clearBtn);
+      calRows.appendChild(root);
+      rowEls[label] = { root, fill, count, recordBtn };
+    }
   }
 }
 
@@ -315,12 +361,35 @@ function handleLabelSet(msg) {
 }
 
 function updateRowProgress(label, count) {
+  latestCounts[label] = count;
   const row = rowEls[label];
   if (!row) return;
   const pct = Math.min(100, (count / minSamplesPerLabel) * 100);
   row.fill.style.width = `${pct}%`;
   row.count.textContent = `${count} / ${minSamplesPerLabel}`;
   row.root.classList.toggle("is-ready", count >= minSamplesPerLabel);
+  updateGatingUI();
+}
+
+// Keeps Train/Confirm from being clicked before they can actually
+// succeed, instead of letting you find out via an error message (Train)
+// or, worse, silently stranding you in keyboard mode with an untrained
+// classifier where literally no gesture can ever fire (Confirm).
+function updateGatingUI(ready) {
+  const allCalibrated = allLabels.length > 0 &&
+    allLabels.every((label) => (latestCounts[label] || 0) >= minSamplesPerLabel);
+
+  trainBtn.disabled = !allCalibrated;
+  trainBtn.title = allCalibrated
+    ? ""
+    : `Record at least ${minSamplesPerLabel} samples for every gesture above first.`;
+
+  const isReady = ready !== undefined ? ready : confirmSetupBtn.dataset.ready === "true";
+  confirmSetupBtn.dataset.ready = isReady ? "true" : "false";
+  confirmSetupBtn.disabled = !isReady;
+  confirmSetupBtn.title = isReady
+    ? "Confirm calibration and switch to keyboard mode"
+    : "Train the classifier below first - otherwise no gesture will do anything in keyboard mode.";
 }
 
 function handleTrainResult(msg) {
@@ -334,6 +403,7 @@ function handleTrainResult(msg) {
     }
   }
   updateDashboardStatus(msg.status === "ok", msg.counts);
+  updateGatingUI(msg.status === "ok");
 }
 
 function handleGestureEvent(msg) {
@@ -379,7 +449,10 @@ function handleResetOk() {
   empty.id = "eventLogEmpty";
   empty.textContent = "Calibrate and train below to start seeing live gesture events here.";
   eventLog.appendChild(empty);
+  latestCounts = {};
   buildCalibrationRows();
+  updateDashboardStatus(false, {});
+  updateGatingUI(false);
 }
 
 trainBtn.addEventListener("click", () => send({ type: "train" }));

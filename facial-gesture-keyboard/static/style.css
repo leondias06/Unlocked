@@ -56,6 +56,18 @@ html, body {
   padding: 24px;
 }
 
+/* The browser's built-in `[hidden] { display: none }` rule loses to
+   `.dashboard`'s own `display: flex` above (same origin, and a plain
+   attribute selector doesn't out-specificity a class selector) - so
+   setting dashboardView.hidden = true from JS silently did nothing
+   visually. This rule is more specific than .dashboard alone, so it
+   actually wins. Without it, clicking "Calibrate" pushed the real
+   calibration UI in underneath a dashboard that never went away,
+   which just looked like the button did nothing. */
+.dashboard[hidden] {
+  display: none;
+}
+
 .dashboard__card {
   width: 100%;
   max-width: 420px;
@@ -348,8 +360,8 @@ html, body {
 
 .calibration {
   max-width: 1180px;
-  margin: 0 auto 40px;
-  padding: 0 28px;
+  margin: 0 auto;
+  padding: 0 28px 110px;
 }
 
 .calibration__header h2 {
@@ -374,9 +386,34 @@ html, body {
   gap: 10px;
 }
 
+.cal-group-header {
+  margin: 18px 0 2px;
+}
+
+.cal-group-header:first-child {
+  margin-top: 0;
+}
+
+.cal-group-header h3 {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--signal);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 4px;
+}
+
+.cal-group-header p {
+  font-size: 12px;
+  color: var(--fog-dim);
+  margin: 0 0 8px;
+  max-width: 60ch;
+}
+
 .cal-row {
   display: grid;
-  grid-template-columns: 100px 1fr 90px auto auto;
+  grid-template-columns: 150px 1fr 90px auto auto;
   align-items: center;
   gap: 14px;
   background: var(--ink-raised);
@@ -416,6 +453,20 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: #F0F3F6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cal-row__badge {
+  font-size: 12px;
+  color: var(--signal);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.cal-row.is-ready .cal-row__badge {
+  opacity: 1;
 }
 
 .cal-row__bar {
@@ -518,6 +569,14 @@ html, body {
 
 .confirm-setup:hover { box-shadow: 0 10px 28px rgba(var(--signal-rgb), 0.5); }
 .confirm-setup:active { transform: translateY(1px); }
+
+.confirm-setup:disabled {
+  background: var(--ink-raised-2);
+  color: var(--fog-dim);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.confirm-setup:disabled:hover { box-shadow: none; }
 
 /* ---------- on-screen keyboard ---------- */
 /*
@@ -723,7 +782,7 @@ html, body {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   color: var(--signal);
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
   display: flex;

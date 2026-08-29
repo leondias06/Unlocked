@@ -38,9 +38,22 @@ ALL_LABELS = [NEUTRAL_LABEL, *GESTURE_LABELS]
 
 MIN_SAMPLES_PER_LABEL = 15   # ~0.75s of frames at 20fps; calibration UI collects more
 K_NEIGHBORS = 5
-CONFIDENCE_THRESHOLD = 0.6   # predictions below this are treated as "unsure" -> neutral
-HOLD_FRAMES_TO_FIRE = 3      # consecutive matching predictions needed before a gesture fires
-NEUTRAL_FRAMES_TO_REARM = 2  # consecutive neutral frames needed before the next gesture can fire
+CONFIDENCE_THRESHOLD = 0.7   # predictions below this are treated as "unsure" -> neutral
+HOLD_FRAMES_TO_FIRE = 5      # consecutive matching predictions needed before a gesture fires
+NEUTRAL_FRAMES_TO_REARM = 3  # consecutive neutral frames needed before the next gesture can fire
+
+# These three were tuned up together (from 0.6 / 3 / 2) after reports of
+# wrong gestures firing - a single noisy/borderline frame (classifier
+# blips happen especially near two gestures' decision boundary) used to
+# be enough to fire the wrong action. Requiring more consecutive matching
+# frames plus a higher confidence floor filters out that kind of blip
+# without meaningfully hurting responsiveness: at ~20fps, 5 frames is
+# ~250ms, still fast for a deliberate hold. If misfires are still
+# happening after this, the next lever is re-calibrating with more
+# distinct/exaggerated movements per gesture (see README troubleshooting)
+# rather than pushing these numbers even higher, since past a point that
+# just makes every gesture feel sluggish instead of fixing the real
+# separability problem.
 
 # Gestures that auto-repeat while held, instead of requiring a return to
 # neutral between each fire - navigation and backspace behave like a
@@ -129,6 +142,33 @@ def landmarks_to_features(landmarks: list[dict]) -> list[float]:
         float(head_yaw), head_roll,
         float(cheek_left), float(cheek_right),
     ]
+
+
+def head_pose(landmarks: list[dict]) -> tuple[float, float]:
+    """
+    Continuous head yaw/pitch for cursor steering in eye mode.
+
+    Deliberately kept separate from landmarks_to_features() above: that
+    vector is fixed-shape and calibrated per-user (changing its
+    dimensionality would break every saved calibration_data.json), while
+    this needs no calibration at all and runs every frame regardless of
+    what's been trained. Duplicating the yaw math is a small price for
+    keeping cursor steering fully decoupled from the gesture classifier.
+
+    Returns (yaw, pitch), normalized by inter-eye distance so it's
+    roughly invariant to how close you're sitting to the camera. Both
+    are near 0 for a centered/neutral head pose; positive yaw = nose
+    shifted right of the eyes (head turned/tilted right), positive pitch
+    = nose shifted below the eyes (head tilted/nodded down).
+    """
+    left_eye_c = _center(landmarks, LEFT_EYE)
+    right_eye_c = _center(landmarks, RIGHT_EYE)
+    scale = float(np.linalg.norm(left_eye_c - right_eye_c)) or 1e-6
+    eye_mid = (left_eye_c + right_eye_c) / 2
+    nose = _pt(landmarks, NOSE_TIP)
+    yaw = (nose[0] - eye_mid[0]) / scale
+    pitch = (nose[1] - eye_mid[1]) / scale
+    return float(yaw), float(pitch)
 
 
 # ---------------------------------------------------------------- calibration store
