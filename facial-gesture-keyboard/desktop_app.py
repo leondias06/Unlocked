@@ -9,11 +9,14 @@ tab:
   - the launch/calibration page (camera + calibration UI + Confirm)
   - the on-screen keyboard, an always-on-top overlay (see windows.py
     for how it avoids stealing OS keyboard focus from whatever app
-    you're actually typing into) - shown by Confirm, hidden by its own
-    "toggle" key (switches to eye/mouse mode), shown again by that
-    mode's "switch_to_keyboard" gesture
+    you're actually typing into) - hidden by its own "toggle" key
+    (switches to eye/mouse mode), shown again automatically by
+    focus_watcher.py whenever the OS-focused control elsewhere becomes
+    something typeable
   - a small tab docked to the left screen edge that reopens calibration
     from either mode
+  - a small always-on-top debug overlay (mode / live gesture / last
+    fired) for testing - see static/debug.html
 
 See windows.DesktopWindows for the actual mode state machine
 (setup / keyboard / eye) - this file just creates the windows and
@@ -47,7 +50,7 @@ TOGGLE_HEIGHT = 80
 KEYBOARD_WIDTH = 720
 KEYBOARD_HEIGHT = 480
 DEBUG_WIDTH = 260
-DEBUG_HEIGHT = 70
+DEBUG_HEIGHT = 92
 
 
 class MainApi:
@@ -77,6 +80,9 @@ class MainApi:
 
     def update_live_gesture(self, prediction: str | None, confidence: float) -> None:
         self._windows.update_live_gesture(prediction, confidence)
+
+    def update_cursor_debug(self, ready: bool, yaw_delta: float, pitch_delta: float) -> None:
+        self._windows.update_cursor_debug(ready, yaw_delta, pitch_delta)
 
 
 class ToggleApi:
@@ -234,6 +240,25 @@ def main() -> None:
     main_api._windows = desktop_windows
     toggle_api._windows = desktop_windows
     keyboard_api._windows = desktop_windows
+
+    # main_window is the only one with a real title bar/close button (the
+    # other three are frameless overlays with no way for a user to close
+    # them directly) - and it's only ever visible in setup mode, so
+    # closing it is an unambiguous "I'm done with this app" signal. Left
+    # unhandled, closing it just destroys that one window while the
+    # keyboard/toggle/debug windows (and the camera/server thread behind
+    # them) keep running invisibly - confirmed happening in practice, so
+    # explicitly tear the rest down too instead of leaving a background
+    # process with no visible window and no way back into the UI short
+    # of a task manager.
+    def _quit_app():
+        for w in (keyboard_window, toggle_window, debug_window):
+            try:
+                w.destroy()
+            except Exception:
+                pass
+
+    main_window.events.closed += _quit_app
 
     webview.start()
 

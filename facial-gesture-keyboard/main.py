@@ -128,14 +128,14 @@ MODE_ALLOWED_LABELS = {
 
 
 def set_active_mode(mode: str) -> None:
-    global active_mode, cursor_baseline
+    global active_mode
     active_mode = mode
     if mode == "eye":
-        # Recapture the "centered" head pose the next time a frame comes
+        # Recapture the "centered" head pose the next time frames come
         # in, rather than reusing whatever was current before - avoids a
         # jump the instant eye mode starts if your head wasn't dead
         # center at that exact moment.
-        cursor_baseline = None
+        reset_cursor_baseline()
 
 
 # Types real OS-level keystrokes so the on-screen keyboard can drive
@@ -145,33 +145,72 @@ def set_active_mode(mode: str) -> None:
 keyboard_controller = KeyboardController()
 
 # Head-pose cursor steering (eye mode) - a continuous joystick-style
-# control, separate from the discrete left_click/right_click/
-# switch_to_keyboard *gestures* (those are classified events handled in
-# windows.py; this runs every frame regardless of the classifier).
+# control, separate from the discrete left_click/right_click *gestures*
+# (those are classified events handled in windows.py; this runs every
+# frame regardless of the classifier).
 mouse_controller = MouseController()
-cursor_baseline: tuple[float, float] | None = None  # (yaw, pitch) captured on entering eye mode
-CURSOR_DEAD_ZONE = 0.02      # normalized head-pose units - ignores small jitter/resting asymmetry
+
+# The "center" pose is averaged over the first CURSOR_BASELINE_SAMPLES
+# frames after entering eye mode, not taken from a single frame - a
+# single frame can catch a momentary outlier (a blink, a hair of motion
+# blur, one noisy landmark estimate), which then becomes "center" for
+# the rest of the session and reads as *continuous* drift in whatever
+# direction that one bad frame happened to be off in, since every
+# following frame is compared against it. Averaging ~0.5s of frames
+# makes that far less likely.
+CURSOR_BASELINE_SAMPLES = 10
+cursor_baseline: tuple[float, float] | None = None
+_cursor_baseline_samples: list[tuple[float, float]] = []
+
+CURSOR_DEAD_ZONE = 0.035     # normalized head-pose units - ignores small jitter/resting asymmetry
 CURSOR_SENSITIVITY = 900.0   # px/sec per unit of head tilt beyond the dead zone
 CURSOR_MAX_SPEED = 900.0     # px/sec cap, so a big head snap can't fling the cursor off-screen
+
+# Live deflection-from-baseline, refreshed every frame in eye mode -
+# purely for the debug overlay (see windows.update_cursor_debug), so
+# drift like "cursor won't stop moving up" is something you can actually
+# see the cause of (a small-but-nonzero pitch delta sitting just outside
+# the dead zone) instead of just observing the symptom.
+cursor_debug: dict = {"ready": False, "yaw_delta": 0.0, "pitch_delta": 0.0}
+
+
+def reset_cursor_baseline() -> None:
+    global cursor_baseline
+    cursor_baseline = None
+    _cursor_baseline_samples.clear()
+    cursor_debug["ready"] = False
 
 
 def update_cursor_from_head_pose(landmarks: list[dict], dt: float) -> None:
     """Moves the real OS cursor based on continuous head yaw/pitch,
-    relative to the pose captured when eye mode was entered - tilt away
+    relative to the pose averaged when eye mode was entered - tilt away
     from center to move, back to center to stop, like a joystick."""
     global cursor_baseline
     yaw, pitch = gestures.head_pose(landmarks)
+
     if cursor_baseline is None:
-        cursor_baseline = (yaw, pitch)
-        return
+        _cursor_baseline_samples.append((yaw, pitch))
+        if len(_cursor_baseline_samples) < CURSOR_BASELINE_SAMPLES:
+            return
+        n = len(_cursor_baseline_samples)
+        cursor_baseline = (
+            sum(s[0] for s in _cursor_baseline_samples) / n,
+            sum(s[1] for s in _cursor_baseline_samples) / n,
+        )
+        cursor_debug["ready"] = True
 
     def deflection(v: float) -> float:
         if abs(v) < CURSOR_DEAD_ZONE:
             return 0.0
         return v - CURSOR_DEAD_ZONE if v > 0 else v + CURSOR_DEAD_ZONE
 
-    dx_speed = max(-CURSOR_MAX_SPEED, min(CURSOR_MAX_SPEED, deflection(yaw - cursor_baseline[0]) * CURSOR_SENSITIVITY))
-    dy_speed = max(-CURSOR_MAX_SPEED, min(CURSOR_MAX_SPEED, deflection(pitch - cursor_baseline[1]) * CURSOR_SENSITIVITY))
+    yaw_delta = yaw - cursor_baseline[0]
+    pitch_delta = pitch - cursor_baseline[1]
+    cursor_debug["yaw_delta"] = round(yaw_delta, 3)
+    cursor_debug["pitch_delta"] = round(pitch_delta, 3)
+
+    dx_speed = max(-CURSOR_MAX_SPEED, min(CURSOR_MAX_SPEED, deflection(yaw_delta) * CURSOR_SENSITIVITY))
+    dy_speed = max(-CURSOR_MAX_SPEED, min(CURSOR_MAX_SPEED, deflection(pitch_delta) * CURSOR_SENSITIVITY))
     dx, dy = dx_speed * dt, dy_speed * dt
     if dx or dy:
         mouse_controller.move(int(dx), int(dy))
@@ -387,6 +426,10 @@ async def ws_endpoint(websocket: WebSocket):
                     "landmarks": landmarks,
                     "key_regions": KEY_REGIONS,
                 }
+                if active_mode == "eye":
+                    # For the debug overlay only - see cursor_debug's
+                    # docstring in update_cursor_from_head_pose above.
+                    response["cursor_debug"] = cursor_debug
 
                 features = gestures.landmarks_to_features(landmarks)
 

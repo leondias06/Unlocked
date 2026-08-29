@@ -6,12 +6,12 @@ This covers the first two working pieces of the hackathon project:
    server, which runs face landmark detection (MediaPipe) and draws the
    landmarks live on screen.
 2. **Calibration + gesture classification** — record a few seconds of
-   each of the 9 target gestures plus a neutral face, train a
+   each of the 8 target gestures plus a neutral face, train a
    lightweight classifier on the spot, and see discrete gesture events
    fire live as you repeat them. Six are for **keyboard mode**
-   (up/down/left/right/confirm/backspace); three are for **eye/mouse
-   mode** (left_click/right_click/switch_to_keyboard). Only one mode's
-   gestures are ever listened to at a time - see "Modes" below.
+   (up/down/left/right/confirm/backspace); two are for **eye/mouse
+   mode** (left_click/right_click). Only one mode's gestures are ever
+   listened to at a time - see "Modes" below.
 3. **On-screen keyboard** — matches the reference layout (11x7 grid,
    esc/tab/caps/enter/backspace, a numbers/symbols column, function
    row). It types **real OS-level keystrokes** (via `pynput`), so it
@@ -19,10 +19,11 @@ This covers the first two working pieces of the hackathon project:
    tab. See "On-screen keyboard" below for platform notes.
 4. **Three modes** (setup / eye / keyboard) - a dashboard you calibrate
    from, a Confirm button that switches into eye/cursor mode (the
-   resting state - not the keyboard), a dedicated gesture that brings
-   the keyboard up on demand, and an on-screen key that sends it back
-   down. See "Modes" below - this is the part most worth reading
-   carefully before changing anything here.
+   resting state - not the keyboard), automatic keyboard pop-up the
+   moment you focus something typeable anywhere on the system (like a
+   phone keyboard - see `focus_watcher.py`), and an on-screen key that
+   sends it back down. See "Modes" below - this is the part most worth
+   reading carefully before changing anything here.
 5. **Standalone desktop app** — `build.spec` packages the whole thing
    into a single `.exe`: a real app window (no browser, no address
    bar), no Python install required to run it, and no network access
@@ -35,7 +36,7 @@ There's no hardcoded rule like "eyebrow raise = up". Instead, you pick
 doesn't need to resemble the real gesture at all — and the calibration
 step records what that looks like in landmark-feature space. A small
 k-nearest-neighbors classifier (`gestures.py`) then learns to tell your
-10 recorded patterns apart. This matters for the target users: which
+9 recorded patterns apart. This matters for the target users: which
 facial movements are reliably controllable varies a lot person to
 person, so the mapping is learned per-user rather than assumed.
 
@@ -95,11 +96,10 @@ such issue.)
 
 ## 3. Calibrate
 
-From the dashboard, click **Calibrate**. For each of the 10 rows -
+From the dashboard, click **Calibrate**. For each of the 9 rows -
 `neutral`, then the 6 **keyboard-mode** gestures
-(`up`, `down`, `left`, `right`, `confirm`, `backspace`), then the 3
-**eye-mode** gestures (`left_click`, `right_click`,
-`switch_to_keyboard`):
+(`up`, `down`, `left`, `right`, `confirm`, `backspace`), then the 2
+**eye-mode** gestures (`left_click`, `right_click`):
 
 1. Decide what facial movement you'll use for that action.
 2. Click **Record**, hold/repeat that movement for a few seconds
@@ -108,11 +108,19 @@ From the dashboard, click **Calibrate**. For each of the 10 rows -
 
 For `neutral`, just hold a relaxed, resting face. Keyboard-mode and
 eye-mode gestures are never listened to at the same time (see "Modes"
-below), so it's fine if a movement you pick for one feels similar to
-one you picked for the other - they'll never be classified against
-each other in practice. `switch_to_keyboard` is the *only* gesture
-eye mode listens for besides the two clicks; there's no gesture to
-leave keyboard mode - that's the on-screen `toggle` key instead.
+below) - the classifier itself is restricted to only the current
+mode's labels, so it can never *output* a wrong-mode label. **Don't
+take that as license to make two gestures across modes identical,
+though**: if `left` (keyboard) and `left_click` (eye) are the same
+movement, an accidental mode flip you don't notice (e.g. a stray
+`confirm` landing on the keyboard's own `toggle` key) means every
+further attempt at that movement now correctly - for the mode you've
+actually ended up in - fires as the *other* gesture, which looks
+exactly like "this gesture is broken" from the outside. Keep gestures
+distinct across modes too, not just within one. There's no gesture to
+leave keyboard mode - that's the on-screen `toggle` key instead - and
+none to enter it either; see "Modes" below for how that actually works
+now.
 
 Once every row is past its minimum, click **Train Classifier**. If it
 succeeds, stop recording and just make your gestures naturally — fired
@@ -140,15 +148,17 @@ likely to be misread, so it's worth being precise about it:
   to move a cursor isn't realistic. Moves the real OS cursor
   continuously via **head-pose steering** (see below), and separately
   receives the discrete `left_click`/`right_click` gestures (real OS
-  mouse clicks) and `switch_to_keyboard`, which brings the keyboard up.
+  mouse clicks).
 - **keyboard** - the on-screen keyboard overlay is visible and
-  receives the 6 keyboard-mode gestures. Entered from **eye** via the
-  `switch_to_keyboard` gesture. The *only* way back out to eye mode is
-  the on-screen **`toggle`** key inside the keyboard grid itself
-  (navigate to it, confirm, like any other key) - there is deliberately
-  no gesture for this direction, since a gesture that hides the
-  keyboard while you're actively using it would be too easy to trigger
-  by accident.
+  receives the 6 keyboard-mode gestures. Entered from **eye**
+  *automatically* - see **Automatic keyboard pop-up** below - not via a
+  gesture; there used to be a `switch_to_keyboard` gesture for this and
+  it's been retired. The *only* way back out to eye mode is the
+  on-screen **`toggle`** key inside the keyboard grid itself (navigate
+  to it, confirm, like any other key) - there is deliberately no
+  gesture for this direction, since a gesture that hides the keyboard
+  while you're actively using it would be too easy to trigger by
+  accident.
 
 Keyboard-mode gestures and eye-mode gestures are never listened to at
 the same time - firing a keyboard-mode gesture while in eye mode (or
@@ -156,21 +166,55 @@ vice versa) is simply ignored. See `windows.DesktopWindows` for the
 actual state machine; `on_gesture()` there is the one place that
 enforces this.
 
+**Automatic keyboard pop-up:** entering keyboard mode isn't a gesture
+or a button - it's automatic, the way a phone's on-screen keyboard
+appears the moment you tap a text field. `focus_watcher.py` polls
+Windows' UI Automation API every 300ms for whatever control has OS
+focus *system-wide* (not just in this app) and checks its control type
+against a small "typeable" set (Edit, Document, ComboBox) - so focusing
+a Word document, a Notepad window, or a browser's search bar all bring
+the keyboard up, and focusing something else (a button, a list, the
+desktop) sends it back down if it was up. It fires again whenever the
+*specific focused element* changes (tracked via UIA's `GetRuntimeId`),
+not just on a typeable/not-typeable transition - clicking straight from
+one typeable field into a different one (a browser's address bar into
+its search box, say) still correctly pops the keyboard up even though
+"typeable" was already true the whole time and never flipped. The one
+case that still won't re-trigger: manually dismissing the keyboard with
+the `toggle` key while staying on the *exact same* field, then wanting
+it back with no focus change at all - there's nothing for UIA to
+observe changing in that case. UI Automation works well for native
+controls and - since major browsers implement it for their own
+accessibility support - for browser text fields too (a Google search
+box reports as a `ComboBox`, for example, which is in the typeable set);
+it's less reliable in some custom-rendered apps (certain Electron apps,
+canvas-based editors) that don't fully implement it, and there's
+currently no gesture fallback for that class of app.
+
 **Head-pose cursor steering:** the cursor doesn't track literal gaze
 (single-webcam gaze estimation is notoriously inaccurate/jittery
 without dedicated IR hardware) - instead it works like a joystick.
-Whatever head yaw/pitch you have when eye mode is entered becomes
-"center"; tilting/turning your head away from that moves the cursor
-continuously in that direction at a speed proportional to how far off
-center you are, and returning to center stops it. This reuses the same
-landmark pipeline already built for gestures (see `gestures.head_pose`)
-but runs independently of the calibrated classifier - it needs no
-calibration step and works immediately on entering eye mode. Tunable in
-`main.py`: `CURSOR_DEAD_ZONE` (how much tilt is ignored as jitter
-around center), `CURSOR_SENSITIVITY` (px/sec per unit of tilt), and
+The "center" pose is *averaged* over the first `CURSOR_BASELINE_SAMPLES`
+frames after eye mode is entered (not taken from a single frame - a
+single noisy frame becoming "center" reads as *continuous* one-
+directional drift for the rest of the session, since every later frame
+is compared against that one bad reading); tilting/turning your head
+away from center moves the cursor continuously in that direction at a
+speed proportional to how far off you are, and returning to center
+stops it. This reuses the same landmark pipeline already built for
+gestures (see `gestures.head_pose`) but runs independently of the
+calibrated classifier - it needs no calibration step. Tunable in
+`main.py`: `CURSOR_BASELINE_SAMPLES` (how many frames get averaged into
+"center"), `CURSOR_DEAD_ZONE` (how much tilt beyond that is ignored as
+jitter), `CURSOR_SENSITIVITY` (px/sec per unit of tilt), and
 `CURSOR_MAX_SPEED` (hard cap so a big head snap can't fling the cursor
-off-screen). These are reasonable starting values, not tuned against a
-real face - expect to adjust them once someone's actually tried it.
+off-screen). These are reasonable starting values, not exhaustively
+tuned against a real face - if the cursor drifts in one direction
+without stopping, the debug overlay's `cursor` line shows the live
+yaw/pitch deflection from center, which is the first thing to check
+(if it's sitting well outside the dead zone while you believe you're
+holding still, the averaged baseline is still off, not the dead zone
+itself - try re-entering eye mode to recapture it).
 
 ## 5. On-screen keyboard
 
@@ -194,10 +238,9 @@ until you release, instead of requiring a full return-to-neutral
 between every single step. This is what actually makes scanning across
 an 11x7 grid fast enough to use; without it, moving from one corner to
 the other means holding-and-releasing the same gesture a dozen times.
-confirm and the eye-mode gestures (left/right click,
-`switch_to_keyboard`) deliberately stay one-shot-per-hold - repeating
-those while held would mean an accidental extra keystroke, click, or
-mode flicker. See `GestureDebouncer` in `gestures.py`.
+confirm and the eye-mode gestures (left/right click) deliberately stay
+one-shot-per-hold - repeating those while held would mean an accidental
+extra keystroke or click. See `GestureDebouncer` in `gestures.py`.
 
 The layout is an 11x7 grid matching the reference design: plain A-Z
 reading order (not QWERTY) with a numbers/symbols column, `caps` and
@@ -258,12 +301,16 @@ code path as the gesture events, so you can test the whole keyboard
 
 `python run.py` is great for development, but it's still "open a
 terminal, run a command, open a browser tab." `desktop_app.py` +
-`build.spec` package the whole app into three real native windows (via
-[pywebview](https://pywebview.flowrite.com/)) instead:
+`build.spec` package the whole app into four real native windows (via
+[pywebview](https://pywebview.flowrite.com/)) instead: the launch/
+calibration window, the keyboard overlay, the left-edge toggle tab, and
+a small always-on-top debug overlay (mode / live gesture / last fired -
+"just for testing," see `static/debug.html`, visible from launch in
+every mode).
 
 The app is a small state machine with three modes - `setup`, `eye`
-and `keyboard` (see "Modes" above) - and the three windows just reflect
-whichever mode is active:
+and `keyboard` (see "Modes" above) - and the first three windows just
+reflect whichever mode is active:
 
 1. The **launch/calibration window** starts in `setup` mode - camera +
    calibration UI (now behind a dashboard, see "Modes") + a **Confirm**
@@ -272,15 +319,16 @@ whichever mode is active:
    mode: no keyboard overlay, just a small **tab docked to the left
    screen edge**. That tab's only job is to reopen calibration (back to
    `setup` mode) - it does not toggle the keyboard.
-3. From `eye` mode, the `switch_to_keyboard` gesture brings up the
-   **keyboard overlay** (`keyboard` mode). From `keyboard` mode, the
-   keyboard's own on-screen **toggle key** sends it back down to `eye`
-   mode (no on-screen button for the other direction, by design - see
-   "Modes" above for why the split is deliberate). Gestures are
-   mode-gated: the six keyboard-navigation gestures only act while in
-   `keyboard` mode, and `left_click`/`right_click`/`switch_to_keyboard`
-   only act while in `eye` mode, so a stray gesture from the "wrong"
-   mode is silently ignored rather than doing something unexpected.
+3. From `eye` mode, focusing anything typeable *anywhere on the system*
+   automatically brings up the **keyboard overlay** (`keyboard` mode) -
+   see "Automatic keyboard pop-up" in "Modes" above; there's no gesture
+   for this anymore. From `keyboard` mode, the keyboard's own on-screen
+   **toggle key** sends it back down to `eye` mode manually, and losing
+   focus on whatever was typeable does the same automatically. Gestures
+   are mode-gated: the six keyboard-navigation gestures only act while
+   in `keyboard` mode, and `left_click`/`right_click` only act while in
+   `eye` mode, so a stray gesture from the "wrong" mode is silently
+   ignored rather than doing something unexpected.
 
 The keyboard overlay is engineered to never steal OS keyboard focus
 when it appears, so gesture-typed keystrokes keep landing in whatever
@@ -330,7 +378,7 @@ tracebacks that a windowed app otherwise swallows.
 
 - **Detection reliability:** does tracking stay stable as you move,
   turn your head, or change lighting?
-- **Gesture separability:** are the 9 gestures + neutral easy to tell
+- **Gesture separability:** are the 8 gestures + neutral easy to tell
   apart in practice, or do some get confused with each other? If two
   gestures keep firing as each other, they're probably too similar in
   landmark-feature space — pick more distinct movements for them.
@@ -362,10 +410,13 @@ facial-gesture-keyboard/
   run.py                 Dev server launcher (use this, not `uvicorn --reload` -
                           see "Run" above for why)
   desktop_app.py          Standalone-app entry point: runs the server in a
-                          background thread, creates the 3 native windows
+                          background thread, creates the 4 native windows
   windows.py              Window orchestration: confirm/minimize, the
                           left-edge toggle tab, and the focus-preserving
                           keyboard overlay show/hide
+  focus_watcher.py        Polls Windows UI Automation for "is the OS-focused
+                          control anywhere on the system typeable" - what
+                          brings the keyboard up automatically (see "Modes")
   build.spec              PyInstaller build config for the standalone .exe
   main.py               FastAPI server: WebSocket endpoint, MediaPipe inference,
                          calibration protocol handling
@@ -379,7 +430,9 @@ facial-gesture-keyboard/
                           calibration panel, Confirm button)
     keyboard.html/.js      The on-screen keyboard - its own page/window
     toggle.html             The small left-edge "reopen calibration" tab
-    style.css              Visual design (shared by all three pages)
+    debug.html              Small always-on-top mode/gesture overlay, for testing
+    style.css              Visual design (shared by index/keyboard/toggle -
+                            debug.html is intentionally standalone)
     app.js                  Camera capture, WebSocket client, landmark drawing,
                             calibration UI wiring
   face_landmarker.task   (auto-downloaded on first run, not checked into git)

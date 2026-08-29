@@ -21,21 +21,33 @@ Three modes (DesktopWindows.mode), matching the actual product design:
   - "eye"      - eye/gaze cursor mode (gaze-to-cursor tracking itself
                  is a later pass; this just wires the mode and its
                  gestures). Receives left_click/right_click (real OS
-                 mouse clicks) and switch_to_keyboard (brings up the
-                 keyboard - the only gesture eye mode listens for
-                 besides the two clicks). Entered from "setup" via the
-                 Confirm button - this, not the keyboard, is the
-                 resting state after confirming: you land able to
-                 control the cursor, and bring up the keyboard on
-                 demand, rather than the other way around.
+                 mouse clicks). Entered from "setup" via the Confirm
+                 button - this, not the keyboard, is the resting state
+                 after confirming: you land able to control the cursor,
+                 and the keyboard comes up on demand, rather than the
+                 other way around.
   - "keyboard" - the keyboard overlay is visible and receives
                  up/down/left/right/confirm/backspace gestures. Entered
-                 from "eye" via the switch_to_keyboard gesture. The
+                 from "eye" *automatically*, not via a gesture - see
+                 focus_watcher.py: whenever the OS-focused control
+                 anywhere on the system (a browser's search bar, a Word
+                 document, Notepad, ...) is something you can actually
+                 type into, the keyboard comes up, the same way a
+                 phone's on-screen keyboard appears when you tap a text
+                 field. There used to be a switch_to_keyboard gesture
+                 for this; it was retired because it shared a near-
+                 identical calibrated movement with left_click, and if a
+                 stray confirm ever landed on the keyboard's own
+                 "toggle" key first (dropping back to eye mode without
+                 the user noticing), every further attempt at that
+                 movement would then correctly - for eye mode - fire as
+                 a real mouse click, which is confusing to debug and
+                 only shows up as "gestures feel broken" downstream.
+                 Auto-detecting focus sidesteps the whole failure mode:
+                 there's no gesture to misfire in the first place. The
                  *only* way back out to eye mode is the on-screen
                  "toggle" key inside the keyboard grid itself (a normal
-                 navigate+confirm key press, not a gesture) - there is
-                 deliberately no gesture that hides the keyboard from
-                 within keyboard mode.
+                 navigate+confirm key press, not a gesture).
 
 Keyboard-mode gestures and eye-mode gestures are never listened to
 simultaneously - on_gesture() below gates on self.mode so a gesture
@@ -76,6 +88,7 @@ from pynput.mouse import Button
 from pynput.mouse import Controller as MouseController
 
 import main as server_module
+from focus_watcher import FocusWatcher
 
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
@@ -134,6 +147,19 @@ class DesktopWindows:
         self.mode = "setup"
         self.mouse = MouseController()
         server_module.set_active_mode(self.mode)
+        self.focus_watcher = FocusWatcher(self._on_focus_typeable_changed)
+        self.focus_watcher.start()
+
+    def _on_focus_typeable_changed(self, is_typeable: bool) -> None:
+        """FocusWatcher callback (runs on its own background thread): the
+        OS-focused control *anywhere on the system* just became typeable,
+        or stopped being. Only acts in eye/keyboard mode - during setup
+        there's no keyboard to bring up yet regardless of what's focused
+        elsewhere."""
+        if is_typeable and self.mode == "eye":
+            self.enter_keyboard_mode()
+        elif not is_typeable and self.mode == "keyboard":
+            self.enter_eye_mode()
 
     @staticmethod
     def _js_safe(s: str) -> str:
@@ -150,6 +176,19 @@ class DesktopWindows:
         pct = round((confidence or 0) * 100)
         self.debug_window.evaluate_js(f"window.updateLive?.('{self.mode}', '{label}', {pct})")
 
+    def update_cursor_debug(self, ready: bool, yaw_delta: float, pitch_delta: float) -> None:
+        """Live head-pose deflection from the eye-mode cursor's centered
+        baseline - see main.py's cursor_debug. Makes drift ("cursor won't
+        stop moving up") diagnosable: if it's sitting well outside the
+        dead zone even when you believe you're holding still, the
+        baseline itself is probably off, not the dead zone or gesture
+        recognition."""
+        if self.debug_window is None:
+            return
+        self.debug_window.evaluate_js(
+            f"window.updateCursorDebug?.({str(bool(ready)).lower()}, {yaw_delta}, {pitch_delta})"
+        )
+
     def _set_mode(self, mode: str) -> None:
         """Every mode transition goes through here so the server's live
         classifier (see main.py's active_mode / MODE_ALLOWED_LABELS)
@@ -164,8 +203,8 @@ class DesktopWindows:
         the left-edge tab and drops straight into eye/cursor mode - not
         the keyboard. Starting in keyboard mode with no way to move a
         cursor isn't a realistic resting state; landing in cursor
-        control and bringing up the keyboard on demand (via the
-        switch_to_keyboard gesture) is."""
+        control and bringing the keyboard up automatically once you
+        focus something typeable (see FocusWatcher) is."""
         self.main_window.hide()
         show_without_stealing_focus(self.toggle_window)
         self._set_mode("eye")
@@ -192,9 +231,7 @@ class DesktopWindows:
                 safe_label = self._js_safe(label)
                 self.keyboard_window.evaluate_js(f"applyGestureToKeyboard('{safe_label}')")
         elif self.mode == "eye":
-            if label == "switch_to_keyboard":
-                self.enter_keyboard_mode()
-            elif label == "left_click":
+            if label == "left_click":
                 self.mouse.click(Button.left)
             elif label == "right_click":
                 self.mouse.click(Button.right)
@@ -204,15 +241,17 @@ class DesktopWindows:
     # --- called from the keyboard window's js_api (the on-screen "toggle" key) --
 
     def enter_eye_mode(self) -> None:
-        """The keyboard's own "toggle" key: the *only* way out of
-        keyboard mode, deliberately not a gesture."""
+        """Two ways in: the keyboard's own "toggle" key (manual,
+        deliberately not a gesture), or FocusWatcher noticing the
+        OS-focused control stopped being typeable (automatic, e.g. you
+        clicked away from the text field entirely)."""
         self.keyboard_window.hide()
         self._set_mode("eye")
 
     def enter_keyboard_mode(self) -> None:
-        """The eye-mode "switch_to_keyboard" gesture: the *only* way
-        back from eye mode, deliberately not a button (there's no
-        keyboard visible to click one on)."""
+        """Called by FocusWatcher when the OS-focused control becomes
+        typeable - by design, that's the only way into keyboard mode;
+        there's no manual button or gesture for this direction."""
         show_without_stealing_focus(self.keyboard_window)
         self._set_mode("keyboard")
 

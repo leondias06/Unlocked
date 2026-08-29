@@ -28,8 +28,17 @@ hiddenimports = [
 # mediapipe, pynput and webview all load platform-specific native
 # binaries/resources dynamically rather than through plain Python
 # imports PyInstaller's static analysis can see - collect_all grabs
-# everything each package ships rather than guessing.
-for pkg in ("mediapipe", "pynput", "webview"):
+# everything each package ships rather than guessing. comtypes is here
+# for a different reason: focus_watcher.py's UI Automation bindings
+# (comtypes.gen.UIAutomationClient) are generated from a COM type
+# library the *first time* comtypes.client.GetModule runs, then cached
+# as plain .py files under comtypes/gen/ - that generation already
+# happened once in dev (see focus_watcher.py's docstring), so by build
+# time those files already exist on disk and just need to be bundled
+# like any other module, not regenerated inside the frozen .exe (whose
+# comtypes/gen/ directory - inside the onefile temp extraction - isn't
+# a stable place to cache anything across runs anyway).
+for pkg in ("mediapipe", "pynput", "webview", "comtypes"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b

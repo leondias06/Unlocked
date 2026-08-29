@@ -6,3 +6,4 @@ numpy>=2.5
 scikit-learn>=1.9
 pynput>=1.7
 pywebview>=6.2
+comtypes>=1.4

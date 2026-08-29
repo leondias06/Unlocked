@@ -44,6 +44,7 @@
   <div class="row"><span class="label">mode:</span> <span id="modeVal">-</span></div>
   <div class="row"><span class="label">seeing:</span> <span id="gestureVal">-</span></div>
   <div class="row"><span class="label">last fired:</span> <span id="firedVal">-</span></div>
+  <div class="row"><span class="label">cursor:</span> <span id="cursorVal">-</span></div>
 </div>
 <script>
   const panel = document.getElementById("panel");
@@ -73,6 +74,27 @@
     flashTimer = setTimeout(() => panel.classList.remove("fired"), 400);
   }
   window.flashFired = flashFired;
+
+  const cursorVal = document.getElementById("cursorVal");
+  // CURSOR_DEAD_ZONE in main.py - kept in sync manually since this is a
+  // display-only echo, not a second source of truth for the real value.
+  const CURSOR_DEAD_ZONE = 0.035;
+
+  // Called every frame while in eye mode (see main.py's cursor_debug) -
+  // yaw/pitch delta from the centered baseline. If this sits well
+  // outside the dead zone even while you believe you're holding still,
+  // the baseline itself is off (see CURSOR_BASELINE_SAMPLES in main.py),
+  // not the dead zone or gesture recognition - that's exactly what this
+  // readout is for catching.
+  function updateCursorDebug(ready, yawDelta, pitchDelta) {
+    if (!ready) {
+      cursorVal.textContent = "centering...";
+      return;
+    }
+    const outside = Math.abs(yawDelta) >= CURSOR_DEAD_ZONE || Math.abs(pitchDelta) >= CURSOR_DEAD_ZONE;
+    cursorVal.textContent = "yaw " + yawDelta.toFixed(3) + "  pitch " + pitchDelta.toFixed(3) + (outside ? "  (moving)" : "  (still)");
+  }
+  window.updateCursorDebug = updateCursorDebug;
 </script>
 </body>
 </html>

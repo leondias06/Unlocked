@@ -186,6 +186,12 @@ function handleTracking(msg) {
     mFace.classList.remove("is-idle", "is-alert");
     mPoints.textContent = msg.landmark_count;
 
+    if (msg.cursor_debug && window.pywebview?.api?.update_cursor_debug) {
+      window.pywebview.api.update_cursor_debug(
+        msg.cursor_debug.ready, msg.cursor_debug.yaw_delta, msg.cursor_debug.pitch_delta
+      );
+    }
+
     if (msg.capture_label) {
       // currently recording calibration samples for this label
       updateRowProgress(msg.capture_label, msg.capture_count);
@@ -294,8 +300,8 @@ function buildCalibrationRows() {
 
       const name = document.createElement("span");
       name.className = "cal-row__name";
-      // Display-only: "switch_to_keyboard" etc. read better with spaces,
-      // and - more importantly - underscores aren't a CSS line-break
+      // Display-only: "left_click" etc. read better with spaces, and -
+      // more importantly - underscores aren't a CSS line-break
       // opportunity, so a long one-word label like that would overflow
       // its fixed-width column and visually overlap the bar next to it.
       // The raw label (with underscores) still goes out over the wire.

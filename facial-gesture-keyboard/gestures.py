@@ -25,7 +25,10 @@ from sklearn.neighbors import KNeighborsClassifier
 # ---------------------------------------------------------------- config
 
 KEYBOARD_MODE_GESTURES = ["up", "down", "left", "right", "confirm", "backspace"]
-EYE_MODE_GESTURES = ["left_click", "right_click", "switch_to_keyboard"]
+# switch_to_keyboard used to live here as a calibrated gesture, but
+# bringing up the keyboard is now automatic - see focus_watcher.py - so
+# there's nothing left to gesture for on this side of the mode switch.
+EYE_MODE_GESTURES = ["left_click", "right_click"]
 
 # Keyboard-mode and eye-mode gestures are mutually exclusive by design
 # (only one mode's gestures are ever listened to at a time - see
