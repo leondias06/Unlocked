@@ -69,6 +69,18 @@ CONTAINER_CONTROL_TYPES_NEEDING_PROOF = {
 
 FOCUS_POLL_INTERVAL_S = 0.3
 
+# A typeable reading has to hold up across this many consecutive polls
+# on the *same* element before the keyboard actually opens - a full page
+# navigation (clicking a link, landing on a new page) briefly moves OS
+# focus through intermediate states while the page is still settling,
+# and a transient element that happens to look typeable for one poll
+# only should not be enough to pop the keyboard up on a page with
+# nothing typeable on it. Genuinely clicking into a real field holds
+# "typeable" for far longer than this, so real use is unaffected -
+# closing is intentionally NOT debounced (see _run below), so leaving a
+# field still dismisses the keyboard immediately.
+FOCUS_OPEN_CONFIRM_POLLS = 2
+
 
 def _load_uia_module():
     # Generates (and caches, in comtypes.gen) Python bindings from the
@@ -102,8 +114,10 @@ class FocusWatcher:
 
     def __init__(self, on_typeable_changed) -> None:
         self._on_typeable_changed = on_typeable_changed
-        self._last_typeable: bool | None = None
+        self._last_typeable: bool | None = None  # tracks the *confirmed* (debounced) state
         self._last_element_id: tuple | None = None
+        self._pending_element_id: tuple | None = None
+        self._pending_count: int = 0
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -133,9 +147,30 @@ class FocusWatcher:
             except Exception:
                 is_typeable, element_id = False, None
 
-            newly_typeable_target = is_typeable and (
+            # Require a typeable reading to hold up for
+            # FOCUS_OPEN_CONFIRM_POLLS consecutive polls on the *same*
+            # element before treating it as confirmed - filters out a
+            # one-poll-only transient (e.g. mid-navigation) without
+            # requiring genuine field clicks to wait any meaningful
+            # amount of time (they hold "typeable" far longer than this).
+            if is_typeable and element_id == self._pending_element_id:
+                self._pending_count += 1
+            elif is_typeable:
+                self._pending_element_id = element_id
+                self._pending_count = 1
+            else:
+                self._pending_element_id = None
+                self._pending_count = 0
+
+            confirmed_typeable = is_typeable and self._pending_count >= FOCUS_OPEN_CONFIRM_POLLS
+
+            newly_typeable_target = confirmed_typeable and (
                 not self._last_typeable or element_id != self._last_element_id
             )
+            # Closing is intentionally based on the raw (non-debounced)
+            # reading, not the confirmed one - once a field really is
+            # focused, leaving it should dismiss the keyboard right away,
+            # with no added delay.
             left_typeable = not is_typeable and self._last_typeable
 
             if newly_typeable_target:
@@ -143,8 +178,8 @@ class FocusWatcher:
             elif left_typeable:
                 self._on_typeable_changed(False)
 
-            self._last_typeable = is_typeable
-            self._last_element_id = element_id if is_typeable else None
+            self._last_typeable = confirmed_typeable
+            self._last_element_id = element_id if confirmed_typeable else None
 
             time.sleep(FOCUS_POLL_INTERVAL_S)
 
