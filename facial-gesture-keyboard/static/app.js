@@ -193,6 +193,11 @@ function handleTracking(msg) {
       // live classification readout
       const conf = msg.confidence !== undefined ? ` (${Math.round(msg.confidence * 100)}%)` : "";
       mPrediction.textContent = (msg.prediction || "—") + conf;
+      // Also drives the small always-on-top debug overlay (windows.py),
+      // since that window has no camera/websocket of its own.
+      if (window.pywebview?.api?.update_live_gesture) {
+        window.pywebview.api.update_live_gesture(msg.prediction || null, msg.confidence || 0);
+      }
     } else {
       mPrediction.textContent = "not calibrated";
     }

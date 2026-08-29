@@ -157,16 +157,26 @@ def head_pose(landmarks: list[dict]) -> tuple[float, float]:
 
     Returns (yaw, pitch), normalized by inter-eye distance so it's
     roughly invariant to how close you're sitting to the camera. Both
-    are near 0 for a centered/neutral head pose; positive yaw = nose
-    shifted right of the eyes (head turned/tilted right), positive pitch
-    = nose shifted below the eyes (head tilted/nodded down).
+    are near 0 for a centered/neutral head pose; positive yaw = the
+    user's own right (see the sign note below), positive pitch = nose
+    shifted below the eyes (head tilted/nodded down).
+
+    Sign note: the raw camera frame sent to the server is NOT mirrored
+    (same as the landmarks used for gesture classification) - it's like
+    a photo taken of you from the front, where your right appears on
+    the frame's *left* (smaller x), the opposite of what you see in a
+    mirror or in this app's own video preview (which flips the canvas
+    for display only). So "nose shifted toward larger x" means the
+    user's head turned to *their left*, not their right - this negates
+    that raw quantity so positive yaw consistently means "the user's
+    right," which is what every caller (cursor steering) actually wants.
     """
     left_eye_c = _center(landmarks, LEFT_EYE)
     right_eye_c = _center(landmarks, RIGHT_EYE)
     scale = float(np.linalg.norm(left_eye_c - right_eye_c)) or 1e-6
     eye_mid = (left_eye_c + right_eye_c) / 2
     nose = _pt(landmarks, NOSE_TIP)
-    yaw = (nose[0] - eye_mid[0]) / scale
+    yaw = (eye_mid[0] - nose[0]) / scale
     pitch = (nose[1] - eye_mid[1]) / scale
     return float(yaw), float(pitch)
 

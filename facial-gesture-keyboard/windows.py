@@ -120,13 +120,35 @@ class DesktopWindows:
     alongside the mode logic, rather than in main.py - it's purely
     mode-orchestration, not gesture recognition."""
 
-    def __init__(self, main_window: webview.Window, keyboard_window: webview.Window, toggle_window: webview.Window) -> None:
+    def __init__(
+        self,
+        main_window: webview.Window,
+        keyboard_window: webview.Window,
+        toggle_window: webview.Window,
+        debug_window: webview.Window | None = None,
+    ) -> None:
         self.main_window = main_window
         self.keyboard_window = keyboard_window
         self.toggle_window = toggle_window
+        self.debug_window = debug_window
         self.mode = "setup"
         self.mouse = MouseController()
         server_module.set_active_mode(self.mode)
+
+    @staticmethod
+    def _js_safe(s: str) -> str:
+        return s.replace("\\", "").replace("'", "")
+
+    def update_live_gesture(self, prediction: str | None, confidence: float) -> None:
+        """Called every live-classified frame (see MainApi.update_live_gesture)
+        to drive the small always-on-top debug overlay - "just for testing
+        purposes", per spec, so it deliberately shows the *raw* per-frame
+        reading, not the debounced/mode-gated result."""
+        if self.debug_window is None:
+            return
+        label = self._js_safe(prediction or "neutral")
+        pct = round((confidence or 0) * 100)
+        self.debug_window.evaluate_js(f"window.updateLive?.('{self.mode}', '{label}', {pct})")
 
     def _set_mode(self, mode: str) -> None:
         """Every mode transition goes through here so the server's live
@@ -156,9 +178,18 @@ class DesktopWindows:
         window's JS. Only the gestures belonging to the *current* mode
         are acted on; everything else is ignored.
         """
+        if self.debug_window is not None:
+            # Logged before mode-gating below, deliberately - a gesture
+            # silently ignored because it's the "wrong" mode still shows
+            # up here, which is exactly what you need to catch something
+            # firing when you didn't mean it to.
+            self.debug_window.evaluate_js(
+                f"window.flashFired?.('{self.mode}', '{self._js_safe(label)}')"
+            )
+
         if self.mode == "keyboard":
             if label in KEYBOARD_MODE_GESTURES:
-                safe_label = label.replace("\\", "").replace("'", "")
+                safe_label = self._js_safe(label)
                 self.keyboard_window.evaluate_js(f"applyGestureToKeyboard('{safe_label}')")
         elif self.mode == "eye":
             if label == "switch_to_keyboard":

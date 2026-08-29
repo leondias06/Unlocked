@@ -46,6 +46,8 @@ TOGGLE_WIDTH = 120
 TOGGLE_HEIGHT = 80
 KEYBOARD_WIDTH = 720
 KEYBOARD_HEIGHT = 480
+DEBUG_WIDTH = 260
+DEBUG_HEIGHT = 70
 
 
 class MainApi:
@@ -72,6 +74,9 @@ class MainApi:
 
     def on_gesture(self, label: str) -> None:
         self._windows.on_gesture(label)
+
+    def update_live_gesture(self, prediction: str | None, confidence: float) -> None:
+        self._windows.update_live_gesture(prediction, confidence)
 
 
 class ToggleApi:
@@ -208,7 +213,24 @@ def main() -> None:
         min_size=(TOGGLE_WIDTH, TOGGLE_HEIGHT),
     )
 
-    desktop_windows = DesktopWindows(main_window, keyboard_window, toggle_window)
+    # Small always-on-top diagnostic overlay - current mode, the raw
+    # live gesture prediction, and the last debounced fire (even if
+    # mode-gating went on to ignore it). Just for testing: visible from
+    # launch in every mode, no js_api of its own since Python only ever
+    # pushes into it via evaluate_js, nothing calls back out.
+    debug_window = webview.create_window(
+        "Debug",
+        url=f"{base_url}/debug.html",
+        width=DEBUG_WIDTH,
+        height=DEBUG_HEIGHT,
+        x=screen_w - DEBUG_WIDTH - 12,
+        y=12,
+        frameless=True,
+        on_top=True,
+        min_size=(DEBUG_WIDTH, DEBUG_HEIGHT),
+    )
+
+    desktop_windows = DesktopWindows(main_window, keyboard_window, toggle_window, debug_window)
     main_api._windows = desktop_windows
     toggle_api._windows = desktop_windows
     keyboard_api._windows = desktop_windows

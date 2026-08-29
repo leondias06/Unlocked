@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Debug</title>
+<style>
+  /* Deliberately not pulling in style.css - this is a tiny, standalone
+     diagnostic overlay ("just for testing purposes") and shouldn't need
+     to track the main theme. */
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: rgba(20, 20, 20, 0.88);
+    color: #d1d0c5;
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #panel {
+    padding: 8px 10px;
+    border-left: 3px solid #6b6b6b;
+    transition: border-color 0.15s;
+  }
+  #panel.fired {
+    border-left-color: #e2b714;
+  }
+  .row {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .row + .row {
+    margin-top: 3px;
+  }
+  .label {
+    color: #6b6b6b;
+  }
+</style>
+</head>
+<body>
+<div id="panel">
+  <div class="row"><span class="label">mode:</span> <span id="modeVal">-</span></div>
+  <div class="row"><span class="label">seeing:</span> <span id="gestureVal">-</span></div>
+  <div class="row"><span class="label">last fired:</span> <span id="firedVal">-</span></div>
+</div>
+<script>
+  const panel = document.getElementById("panel");
+  const modeVal = document.getElementById("modeVal");
+  const gestureVal = document.getElementById("gestureVal");
+  const firedVal = document.getElementById("firedVal");
+  let flashTimer = null;
+
+  // Called from Python (windows.py) on every live per-frame prediction -
+  // this is the raw, pre-debounce reading, so you can watch it hover
+  // near a gesture and rise/fall in confidence before anything fires.
+  function updateLive(mode, gesture, pct) {
+    modeVal.textContent = mode;
+    gestureVal.textContent = gesture + " (" + pct + "%)";
+  }
+  window.updateLive = updateLive;
+
+  // Called from Python whenever the debouncer actually fires an event -
+  // *before* mode-gating decides whether to act on it, so a gesture
+  // that's being silently ignored because it's the "wrong" mode still
+  // shows up here. That's the whole point: it's how you'd catch
+  // something firing when you didn't mean it to.
+  function flashFired(mode, label) {
+    firedVal.textContent = label + " (in " + mode + " mode)";
+    panel.classList.add("fired");
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => panel.classList.remove("fired"), 400);
+  }
+  window.flashFired = flashFired;
+</script>
+</body>
+</html>
