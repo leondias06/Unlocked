@@ -26,34 +26,37 @@ Unlocked is a real-time computer vision pipeline buuilt from Python and other fr
 
 ## System Structure
 
+## System Structure
 
+```txt
 facial-gesture-keyboard/
 │
 ├── static/
-│   ├── index.html                              Main app shell served to the webview
-│   ├── keyboard.html                           On-screen keyboard layout and keys
-│   ├── keyboard.js                             Key press handling and keyboard interaction logic
-│   ├── toggle.html                             Toggle / control panel UI
-│   ├── debug.html                              Debug view for landmarks, gestures, and focus state
-│   ├── app.js                                  Frontend logic, camera feed, and backend messaging
-│   └── style.css                               Global styling for all views
+│   ├── index.html                  Main app shell served to the webview
+│   ├── keyboard.html               On-screen keyboard layout and keys
+│   ├── keyboard.js                 Key press handling and keyboard interaction logic
+│   ├── toggle.html                 Toggle / control panel UI
+│   ├── debug.html                  Debug view for landmarks, gestures, and focus state
+│   ├── app.js                      Frontend logic, camera feed, and backend messaging
+│   └── style.css                   Global styling for all views
 │
-├── main.py                                     Application entry point and startup wiring
-├── run.py                                      Dev launcher for running the app locally
-├── desktop_app.py                              Desktop window host and webview integration
+├── main.py                         Application entry point and startup wiring
+├── run.py                          Dev launcher for running the app locally
+├── desktop_app.py                  Desktop window host and webview integration
 │
-├── gestures.py                                 Facial landmark processing and gesture recognition
-├── focus_watcher.py                            UIA focus polling and typeable-element detection
-├── windows.py                                  Windows integration, keyboard visibility, and mode switching
+├── gestures.py                     Facial landmark processing and gesture recognition
+├── focus_watcher.py                UIA focus polling and typeable-element detection
+├── windows.py                      Windows integration, keyboard visibility, mode switching
 │
-├── face_landmarker.task                        MediaPipe face landmarker model file
-├── calibration_data.json                       Saved per-user gesture calibration thresholds
+├── face_landmarker.task            MediaPipe face landmarker model file
+├── calibration_data.json           Saved per-user gesture calibration thresholds
 │
-├── build.spec                                  PyInstaller build specification
-├── build/                                      PyInstaller intermediate build output
-├── dist/                                       Packaged executable output
+├── build.spec                      PyInstaller build specification
+├── build/                          PyInstaller intermediate build output
+├── dist/                           Packaged executable output
 │
-├── requirements.txt                            Runtime Python dependencies
-├── requirements-build.txt                      Additional dependencies for building the executable
-├── .gitignore                                  Files and folders ignored by Git
-└── README.md                                   Project documentation
+├── requirements.txt                Runtime Python dependencies
+├── requirements-build.txt          Additional dependencies for building the executable
+├── .gitignore                      Files and folders ignored by Git
+└── README.md                       Project documentation
+```
