@@ -24,7 +24,6 @@ The app takes in a live video feed through a computer webcam and tracks 468 faci
 Unlocked is a real-time computer vision pipeline buuilt from Python and other frameworks. Your browser streams webcam frames to a server over a persistent WebSocket. There, Google MediaPipe extracts four hundred sixty-eight facial landmarks and encodes them into an eleven-dimensional feature vector. A k-NN classifier, trained on your own calibration data, evaluates that vector. Once a prediction clears our confidence threshold and holds steady across several frames, Unlocked fires a real OS-level keystroke directly into whatever application has focus.
 
 
-## System Structure
 
 ## System Structure
 
