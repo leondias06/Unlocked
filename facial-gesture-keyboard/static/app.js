@@ -300,7 +300,7 @@ function buildCalibrationRows() {
   const groups = [
     { title: "Neutral", hint: "Your resting/relaxed face - recorded as its own label so the classifier has a baseline for \"no gesture\".", labels: [neutralLabel] },
     { title: "Keyboard mode", hint: "Used while the on-screen keyboard is active: scanning the grid and confirming keys.", labels: keyboardModeGestures },
-    { title: "Eye / mouse mode", hint: "Used once real cursor control is active: clicking and switching back to the keyboard.", labels: eyeModeGestures },
+    { title: "Eye / mouse mode", hint: "Used once real cursor control is active: clicking and scrolling.", labels: eyeModeGestures },
   ];
 
   for (const group of groups) {

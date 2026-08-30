@@ -1,5 +1,5 @@
 """
-Detects whether the OS-wide focused UI element - in *any* app, not just
+Detects whether the OS-wide focused UI element - in any app, not just
 this one - is something you can type into (a text box, a document, a
 combo box with an editable field), so the keyboard overlay can come up
 automatically the way a phone's on-screen keyboard does: show up when
@@ -41,27 +41,34 @@ UIA_GROUP_CONTROL_TYPE_ID = 50026
 UIA_PANE_CONTROL_TYPE_ID = 50033
 UIA_CUSTOM_CONTROL_TYPE_ID = 50025
 
-# Edit and ComboBox mean "typeable" unconditionally - every native and
+# Edit and ComboBox mean typeable unconditionally - every native and
 # browser text input reports one of these, no further check needed.
 ALWAYS_TYPEABLE_CONTROL_TYPES = {
     UIA_EDIT_CONTROL_TYPE_ID,
     UIA_COMBO_BOX_CONTROL_TYPE_ID,
 }
 
-# Document, on the other hand, is genuinely ambiguous: a native app's
-# editable body (Word) *and* a browser's read-only page content both
-# report as Document - confirmed live that Chrome moves focus to the
-# page's root "Document" element on every full navigation (a known
-# behavior for screen-reader compatibility), which is exactly what was
-# popping the keyboard up on every link click/new page with nothing
-# typeable on it. Group/Pane/Custom are the reverse case: confirmed live
-# that a real contenteditable region (the kind of hidden capture surface
-# rich editors like Google Docs use) reports as Group, not Document, so
-# it was never being detected as typeable at all. Both directions are
-# resolved by the same check - see _is_readonly_text() below - rather
-# than trusting or excluding control type alone.
-DOCUMENT_LIKE_CONTROL_TYPES = {UIA_DOCUMENT_CONTROL_TYPE_ID}
-CONTAINER_CONTROL_TYPES_NEEDING_PROOF = {
+# Document, Group, Pane, and Custom are all genuinely ambiguous: a
+# native app's editable body (Word) *and* a browser's read-only page
+# content can both report as Document, and a real contenteditable
+# region (the kind of hidden capture surface rich editors like Google
+# Docs use) reports as Group, not Document. All four are resolved the
+# same way - see _is_readonly_text() below - by requiring *explicit*
+# proof of editability (a clean `False` reading), never trusting one of
+# these by default when the check is inconclusive. That last part
+# matters a lot in practice: GetAttributeValue() doesn't return a plain
+# bool, it can also come back as a "not supported" or "mixed" COM
+# sentinel - which happens routinely on a document that's still mid-
+# load, or one with heterogeneous formatting spanning its whole range -
+# and treating that inconclusive case as "trust it" (the original,
+# wrong version of this) is a fail-open bug: a page fully loads to a
+# clean `True` (correctly read-only) well after this element was first
+# focused, so the bad reading only exists for the brief, hard-to-catch
+# window while the page is still settling - exactly why it reproduced
+# reliably in scripted testing against an already-loaded page, but not
+# in real, live browsing.
+AMBIGUOUS_CONTROL_TYPES = {
+    UIA_DOCUMENT_CONTROL_TYPE_ID,
     UIA_GROUP_CONTROL_TYPE_ID,
     UIA_PANE_CONTROL_TYPE_ID,
     UIA_CUSTOM_CONTROL_TYPE_ID,
@@ -71,14 +78,13 @@ FOCUS_POLL_INTERVAL_S = 0.3
 
 # A typeable reading has to hold up across this many consecutive polls
 # on the *same* element before the keyboard actually opens - a full page
-# navigation (clicking a link, landing on a new page) briefly moves OS
-# focus through intermediate states while the page is still settling,
-# and a transient element that happens to look typeable for one poll
-# only should not be enough to pop the keyboard up on a page with
-# nothing typeable on it. Genuinely clicking into a real field holds
-# "typeable" for far longer than this, so real use is unaffected -
-# closing is intentionally NOT debounced (see _run below), so leaving a
-# field still dismisses the keyboard immediately.
+# navigation briefly moves OS focus through intermediate states while
+# the page is still settling, and one poll's transient reading
+# shouldn't be enough to pop the keyboard up on a page with nothing
+# typeable on it. Genuinely clicking into a real field holds "typeable"
+# for far longer than this, so real use is unaffected - closing is
+# intentionally NOT debounced (see _run below), so leaving a field still
+# dismisses the keyboard immediately.
 FOCUS_OPEN_CONFIRM_POLLS = 2
 
 
@@ -143,9 +149,9 @@ class FocusWatcher:
 
         while not self._stop.is_set():
             try:
-                is_typeable, element_id = self._inspect_focused_element(uia, uia_module)
+                is_typeable, element_id, element = self._inspect_focused_element(uia, uia_module)
             except Exception:
-                is_typeable, element_id = False, None
+                is_typeable, element_id, element = False, None, None
 
             # Require a typeable reading to hold up for
             # FOCUS_OPEN_CONFIRM_POLLS consecutive polls on the *same*
@@ -174,6 +180,7 @@ class FocusWatcher:
             left_typeable = not is_typeable and self._last_typeable
 
             if newly_typeable_target:
+                self._log_open(element, element_id)
                 self._on_typeable_changed(True)
             elif left_typeable:
                 self._on_typeable_changed(False)
@@ -182,6 +189,22 @@ class FocusWatcher:
             self._last_element_id = element_id if confirmed_typeable else None
 
             time.sleep(FOCUS_POLL_INTERVAL_S)
+
+    @staticmethod
+    def _log_open(element, element_id) -> None:
+        # Diagnostic only - if the keyboard still pops up somewhere it
+        # shouldn't after the fixes above, this is what tells us exactly
+        # what UIA thinks that element is, rather than guessing again.
+        try:
+            print(
+                "[focus_watcher] KEYBOARD OPEN: "
+                f"ctrl_type={element.CurrentControlType} name={element.CurrentName!r} "
+                f"class={element.CurrentClassName!r} framework={element.CurrentFrameworkId!r} "
+                f"pid={element.CurrentProcessId} rid={element_id} "
+                f"has_focus={element.CurrentHasKeyboardFocus} rect={element.CurrentBoundingRectangle}"
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _is_readonly_text(element, uia_module) -> bool | None:
@@ -214,11 +237,26 @@ class FocusWatcher:
             return None
         return value if isinstance(value, bool) else None
 
+    @staticmethod
+    def _has_real_presence(element) -> bool:
+        """A loading/hidden document or an offscreen ad iframe routinely
+        fails one of these even while briefly holding focus - cheap
+        extra guard for the ambiguous control types specifically (Edit/
+        ComboBox are left alone; those are already reliable on their
+        own)."""
+        try:
+            if not element.CurrentHasKeyboardFocus:
+                return False
+            rect = element.CurrentBoundingRectangle
+            return (rect.right - rect.left) > 0 and (rect.bottom - rect.top) > 0
+        except Exception:
+            return False
+
     @classmethod
-    def _inspect_focused_element(cls, uia, uia_module) -> tuple[bool, tuple | None]:
+    def _inspect_focused_element(cls, uia, uia_module):
         element = uia.GetFocusedElement()
         if element is None:
-            return False, None
+            return False, None, None
         if element.CurrentProcessId == _OWN_PID:
             # The keyboard overlay's own <textarea> preview is a real,
             # focusable Edit-type control - if OS focus ever lands on
@@ -229,28 +267,31 @@ class FocusWatcher:
             # that), it must never count as "you focused something
             # typeable" - that would be reacting to our own UI, not
             # anything the user actually did.
-            return False, None
+            return False, None, None
 
         control_type = element.CurrentControlType
         if control_type in ALWAYS_TYPEABLE_CONTROL_TYPES:
             is_typeable = True
-        elif control_type in DOCUMENT_LIKE_CONTROL_TYPES:
-            # Trusted by default (this is what made Word/native document
-            # editors work in the first place) - only overridden when we
-            # can *prove* the content is read-only.
-            is_typeable = cls._is_readonly_text(element, uia_module) is not True
-        elif control_type in CONTAINER_CONTROL_TYPES_NEEDING_PROOF:
-            # Excluded by default (these are common, generic container
-            # types used all over every UI) - only trusted when we can
-            # *prove* the content is genuinely editable.
-            is_typeable = cls._is_readonly_text(element, uia_module) is False
+        elif control_type in AMBIGUOUS_CONTROL_TYPES:
+            # Excluded by default - only trusted when we can *prove* the
+            # content is genuinely editable (a clean `False` reading,
+            # not merely "not provably read-only" - see
+            # AMBIGUOUS_CONTROL_TYPES above for why treating an
+            # inconclusive reading as trusted was the actual bug), and
+            # only while it plausibly has real, on-screen focus right
+            # now (filters out a loading/hidden/offscreen element that
+            # happens to answer these calls at all).
+            is_typeable = (
+                cls._is_readonly_text(element, uia_module) is False
+                and cls._has_real_presence(element)
+            )
         else:
             is_typeable = False
 
         if not is_typeable:
-            return False, None
+            return False, None, None
         try:
             element_id = element.GetRuntimeId()
         except Exception:
             element_id = None
-        return True, element_id
+        return True, element_id, element

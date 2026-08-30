@@ -31,15 +31,8 @@ from pynput.mouse import Controller as MouseController
 
 import gestures
 
-# --- MediaPipe Face Landmarker setup -----------------------------------
-#
-# Note for the team: MediaPipe's older `mp.solutions.face_mesh` API
-# (what most tutorials/blog posts show) has been replaced by the newer
-# Tasks API in current MediaPipe releases (pip installs 1.0.x now).
-# Same underlying model quality, different Python interface - this file
-# uses the current one. It needs a small model file (face_landmarker.task,
-# ~3-4MB) which is downloaded automatically the first time you run this
-# server (requires internet on first run only; cached locally after that).
+# MediaPipe Face Landmarker setup 
+
 
 MODEL_PATH = Path(__file__).parent / "face_landmarker.task"
 MODEL_URL = (
