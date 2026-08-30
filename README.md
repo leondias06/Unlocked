@@ -24,4 +24,36 @@ The app takes in a live video feed through a computer webcam and tracks 468 faci
 Unlocked is a real-time computer vision pipeline buuilt from Python and other frameworks. Your browser streams webcam frames to a server over a persistent WebSocket. There, Google MediaPipe extracts four hundred sixty-eight facial landmarks and encodes them into an eleven-dimensional feature vector. A k-NN classifier, trained on your own calibration data, evaluates that vector. Once a prediction clears our confidence threshold and holds steady across several frames, Unlocked fires a real OS-level keystroke directly into whatever application has focus.
 
 
-## File structure
+## System Structure
+
+
+facial-gesture-keyboard/
+│
+├── static/
+│   ├── index.html                              Main app shell served to the webview
+│   ├── keyboard.html                           On-screen keyboard layout and keys
+│   ├── keyboard.js                             Key press handling and keyboard interaction logic
+│   ├── toggle.html                             Toggle / control panel UI
+│   ├── debug.html                              Debug view for landmarks, gestures, and focus state
+│   ├── app.js                                  Frontend logic, camera feed, and backend messaging
+│   └── style.css                               Global styling for all views
+│
+├── main.py                                     Application entry point and startup wiring
+├── run.py                                      Dev launcher for running the app locally
+├── desktop_app.py                              Desktop window host and webview integration
+│
+├── gestures.py                                 Facial landmark processing and gesture recognition
+├── focus_watcher.py                            UIA focus polling and typeable-element detection
+├── windows.py                                  Windows integration, keyboard visibility, and mode switching
+│
+├── face_landmarker.task                        MediaPipe face landmarker model file
+├── calibration_data.json                       Saved per-user gesture calibration thresholds
+│
+├── build.spec                                  PyInstaller build specification
+├── build/                                      PyInstaller intermediate build output
+├── dist/                                       Packaged executable output
+│
+├── requirements.txt                            Runtime Python dependencies
+├── requirements-build.txt                      Additional dependencies for building the executable
+├── .gitignore                                  Files and folders ignored by Git
+└── README.md                                   Project documentation
