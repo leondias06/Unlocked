@@ -25,6 +25,9 @@ Unlocked is a real-time computer vision pipeline buuilt from Python and other fr
 
 
 
+## How do you run Unlocked?
+To run Unlocked please run the file named FacialGestureKeyboard.exe located at Unlocked/facial-gesture-keyboard/dist/
+
 ## System Structure
 
 ```txt
