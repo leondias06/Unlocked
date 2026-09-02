@@ -2,49 +2,94 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Debug</title>
+<title>Diagnostics</title>
 <style>
-  /* Deliberately not pulling in style.css - this is a tiny, standalone
-     diagnostic overlay ("just for testing purposes") and shouldn't need
-     to track the main theme. */
+  /* Standalone on purpose - this is a tiny always-on-top diagnostic
+     window (260x92, see DEBUG_WIDTH/DEBUG_HEIGHT in desktop_app.py),
+     so it carries its own styles rather than pulling the whole app
+     stylesheet in for four rows of text. Everything here is sized to
+     fit that window exactly. */
+  :root {
+    --ink: #0A0C10;
+    --edge: rgba(255, 255, 255, 0.08);
+    --text-hi: #EEF2F7;
+    --text: #AEB8C6;
+    --text-dim: #5F6A78;
+    --signal: #35D6C4;
+    --alert: #FF5F5F;
+  }
+
   html, body {
     margin: 0;
-    padding: 0;
-    background: rgba(20, 20, 20, 0.88);
-    color: #d1d0c5;
-    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 12px;
+    height: 100%;
     overflow: hidden;
+    background: transparent;
+    color: var(--text);
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     -webkit-user-select: none;
     user-select: none;
   }
+
   #panel {
-    padding: 8px 10px;
-    border-left: 3px solid #6b6b6b;
-    transition: border-color 0.15s;
+    height: 100%;
+    box-sizing: border-box;
+    padding: 7px 9px;
+    background: linear-gradient(180deg, rgba(24, 28, 35, 0.94), rgba(10, 12, 16, 0.96));
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.1),
+      inset 2px 0 0 rgba(53, 214, 196, 0.5);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    transition: box-shadow 0.15s;
   }
+
+  /* A fired gesture lights the whole housing edge, so it reads from
+     peripheral vision without having to look directly at the panel. */
   #panel.fired {
-    border-left-color: #e2b714;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      inset 2px 0 0 var(--signal),
+      inset 0 0 26px rgba(53, 214, 196, 0.22);
   }
+
   .row {
+    display: grid;
+    grid-template-columns: 58px 1fr;
+    align-items: baseline;
+    gap: 6px;
+    line-height: 1.25;
     white-space: nowrap;
+  }
+
+  .label {
+    font-size: 8.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .val {
+    font-size: 11px;
+    color: var(--text-hi);
     overflow: hidden;
     text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
   }
-  .row + .row {
-    margin-top: 3px;
-  }
-  .label {
-    color: #6b6b6b;
-  }
+
+  #modeVal { color: var(--signal); letter-spacing: 0.06em; }
+  #firedVal { color: var(--text); }
+  #cursorVal { font-size: 10px; color: var(--text); }
 </style>
 </head>
 <body>
 <div id="panel">
-  <div class="row"><span class="label">mode:</span> <span id="modeVal">-</span></div>
-  <div class="row"><span class="label">seeing:</span> <span id="gestureVal">-</span></div>
-  <div class="row"><span class="label">last fired:</span> <span id="firedVal">-</span></div>
-  <div class="row"><span class="label">cursor:</span> <span id="cursorVal">-</span></div>
+  <div class="row"><span class="label">mode</span><span class="val" id="modeVal">-</span></div>
+  <div class="row"><span class="label">seeing</span><span class="val" id="gestureVal">-</span></div>
+  <div class="row"><span class="label">fired</span><span class="val" id="firedVal">-</span></div>
+  <div class="row"><span class="label">cursor</span><span class="val" id="cursorVal">-</span></div>
 </div>
 <script>
   const panel = document.getElementById("panel");
@@ -68,7 +113,7 @@
   // shows up here. That's the whole point: it's how you'd catch
   // something firing when you didn't mean it to.
   function flashFired(mode, label) {
-    firedVal.textContent = label + " (in " + mode + " mode)";
+    firedVal.textContent = label + " · " + mode;
     panel.classList.add("fired");
     if (flashTimer) clearTimeout(flashTimer);
     flashTimer = setTimeout(() => panel.classList.remove("fired"), 400);
@@ -88,10 +133,11 @@
   // not the dead zone or gesture recognition - that's what this is for.
   function updateCursorDebug(ready, yawDelta, pitchDelta, moving) {
     if (!ready) {
-      cursorVal.textContent = "centering...";
+      cursorVal.textContent = "centering…";
       return;
     }
-    cursorVal.textContent = "yaw " + yawDelta.toFixed(3) + "  pitch " + pitchDelta.toFixed(3) + (moving ? "  (moving)" : "  (still)");
+    cursorVal.textContent =
+      "y" + yawDelta.toFixed(3) + " p" + pitchDelta.toFixed(3) + (moving ? " ▶" : " ■");
   }
   window.updateCursorDebug = updateCursorDebug;
 </script>

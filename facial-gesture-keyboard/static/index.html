@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>CV Pipeline · Facial Gesture Keyboard</title>
+<title>Unlocked · Gesture Control Setup</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -41,7 +41,7 @@
 
 <header class="topbar">
   <div class="topbar__title">
-    <span class="eyebrow">GESTURE KEYBOARD &middot; CV PIPELINE</span>
+    <span class="eyebrow">Gesture control &middot; Calibration</span>
     <h1>Unlocked</h1>
   </div>
   <div class="conn" id="connIndicator">
@@ -53,38 +53,53 @@
 <main class="layout">
 
   <section class="stage">
-    <div class="stage__frame" id="stageFrame">
-      <video id="video" playsinline autoplay muted></video>
-      <canvas id="overlay"></canvas>
-      <div class="stage__hint" id="stageHint">requesting camera access&hellip;</div>
+    <!-- Bezel wraps the frame so the preview sits inside a housing.
+         The frame itself stays a strict 4/3 because app.js sizes the
+         overlay canvas from the raw video dimensions. -->
+    <div class="stage__bezel">
+      <div class="stage__frame" id="stageFrame">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="overlay"></canvas>
+
+        <!-- viewfinder corner brackets, decorative only -->
+        <div class="stage__brackets" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </div>
+
+        <!-- in-frame status, the way a video tile carries its own
+             chrome rather than pushing it out to a sidebar -->
+        <div class="stage__tag">
+          <span>face</span>
+          <span class="metric__value hud__value" id="mFace">&mdash;</span>
+        </div>
+
+        <div class="stage__hud">
+          <div class="hud__item">
+            <span class="hud__label">landmarks</span>
+            <span class="metric__value hud__value" id="mPoints">&mdash;</span>
+          </div>
+          <div class="hud__item">
+            <span class="hud__label">server fps</span>
+            <span class="metric__value hud__value" id="mFps">&mdash;</span>
+          </div>
+          <div class="hud__item">
+            <span class="hud__label">round trip</span>
+            <span class="metric__value hud__value" id="mLatency">&mdash;</span>
+          </div>
+        </div>
+
+        <div class="stage__hint" id="stageHint">requesting camera access&hellip;</div>
+      </div>
     </div>
   </section>
 
   <aside class="telemetry">
-    <h2>Telemetry</h2>
+    <h2>Live reading</h2>
 
     <div class="metric metric--primary">
-      <span class="metric__label">live prediction</span>
+      <span class="metric__label">detected gesture</span>
       <span class="metric__value" id="mPrediction">&mdash;</span>
     </div>
-    <div class="metric">
-      <span class="metric__label">face detected</span>
-      <span class="metric__value" id="mFace">&mdash;</span>
-    </div>
-    <div class="metric">
-      <span class="metric__label">landmarks</span>
-      <span class="metric__value" id="mPoints">&mdash;</span>
-    </div>
-    <div class="metric">
-      <span class="metric__label">server fps</span>
-      <span class="metric__value" id="mFps">&mdash;</span>
-    </div>
-    <div class="metric">
-      <span class="metric__label">round trip</span>
-      <span class="metric__value" id="mLatency">&mdash;</span>
-    </div>
-
-    <div class="divider"></div>
 
     <h2>Regions tracked</h2>
     <ul class="regions" id="regionList">
@@ -99,7 +114,7 @@
 
     <div class="divider"></div>
 
-    <h2>Live Events</h2>
+    <h2>Live events</h2>
     <div class="event-log" id="eventLog">
       <p class="note" id="eventLogEmpty">Calibrate and train below to start seeing live gesture events here.</p>
     </div>
@@ -112,11 +127,11 @@
   <div class="calibration__header">
     <h2>Calibration</h2>
     <p class="help">
-      Pick any facial movement you can reliably repeat for each action below
-      — it doesn't need to look like the real gesture. Hold a neutral face
+      Pick any facial movement you can reliably repeat for each action below.
+      It does not need to look like the real gesture. Hold a neutral face
       while recording "neutral", then record each gesture in turn. Aim for
-      at least the minimum sample count shown per row (more reps = more
-      reliable).
+      at least the minimum sample count shown per row, since more reps means
+      more reliable recognition.
     </p>
   </div>
 
@@ -131,7 +146,7 @@
   </div>
 </section>
 
-<button class="confirm-setup" id="confirmSetupBtn" disabled title="Train the classifier below first - otherwise no gesture will do anything in keyboard mode.">
+<button class="confirm-setup" id="confirmSetupBtn" disabled title="Train the classifier below first, otherwise no gesture will do anything in keyboard mode.">
   Confirm
 </button>
 
